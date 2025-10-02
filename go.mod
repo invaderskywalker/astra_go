@@ -3,6 +3,7 @@ module astra
 go 1.25.1
 
 require (
+	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/coder/websocket v1.8.14
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/golang-jwt/jwt/v5 v5.3.0
@@ -17,6 +18,7 @@ require (
 )
 
 require (
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/deckarep/golang-set/v2 v2.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect

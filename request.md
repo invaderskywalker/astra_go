@@ -14,18 +14,18 @@ curl -X POST http://localhost:8000/auth/login \
 
 curl -X POST "http://127.0.0.1:8000/test/scrape" \
   -H "accept: application/json" \
-  -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTk0ODQ3MjIsInVzZXJfaWQiOjF9.MrbSHk9XZ6eQm0KGd6lKQxVFr36snDQl5xsUZ5Q0kLo" \
+  -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTk1MDU3MjIsInVzZXJfaWQiOjF9._CE4w7g8Pyjb1VkvyE1RODhWo5xRN9WuW2KildHcP24" \
   -d '{
-    "url": "AI Trends",
-    "word_limit": 100
+    "url": "https://docs.ollama.com/cloud#curl-2",
+    "word_limit": 500
   }'
 
 curl -X POST "http://127.0.0.1:8000/test/query/web" \
   -H "accept: application/json" \
-  -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTk0ODQ3MjIsInVzZXJfaWQiOjF9.MrbSHk9XZ6eQm0KGd6lKQxVFr36snDQl5xsUZ5Q0kLo" \
+  -H "Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTk1MDU3MjIsInVzZXJfaWQiOjF9._CE4w7g8Pyjb1VkvyE1RODhWo5xRN9WuW2KildHcP24" \
   -d '{
     "queries": ["AI Trends"],
-    "result_limit": 100
+    "result_limit": 10
   }'
 
 

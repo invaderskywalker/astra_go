@@ -40,8 +40,10 @@ func (c *ScrapeController) Scrape(ctx context.Context, userID int, req types.Scr
 		return nil, nil
 	}
 
+	opts := &types.ScrapeOptions{MaxChars: *req.WordLimit}
+
 	// Scrape the page
-	result, err := c.scraper.ScrapePage(ctx, req.URL, req.WordLimit)
+	result, err := c.scraper.ScrapePage(ctx, req.URL, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -55,15 +57,10 @@ func (c *ScrapeController) Scrape(ctx context.Context, userID int, req types.Scr
 	return &types.ScrapeResponse{
 		Key:     key,
 		URL:     req.URL,
-		Data:    result[:req.WordLimit],
+		Data:    result[:*req.WordLimit],
 		Message: "Scraped and stored successfully",
 	}, nil
 }
-
-// // QueryWeb retrieves scraped results for queries
-// func (c *ScrapeController) QueryWeb(queries []string, userID int) ([]any, error) {
-// 	return c.scraper.QueryWeb(ctx, userID, sessionID)
-// }
 
 func (c *ScrapeController) QueryWebMulti(queries []string, limit int) (any, error) {
 	queryResults := map[string]interface{}{}
