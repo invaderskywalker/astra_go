@@ -3,10 +3,12 @@ package scraper
 import (
 	"astra/astra/utils/types"
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -87,6 +89,141 @@ func (s *Scraper) ScrapePage(ctx context.Context, targetURL string, opts *types.
 	// 	text = text
 	// }
 	return text, nil
+}
+
+func (s *Scraper) ReadMultiplePages(urls []string, maxConcurrent int) ([]types.ScrapeResult, error) {
+	browser, err := s.pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(true),
+		Args: []string{
+			"--disable-gpu",
+			"--no-sandbox",
+			"--disable-dev-shm-usage",
+			"--disable-images",
+			"--disable-http2",
+			"--disable-background-timer-throttling",
+			"--disable-backgrounding-occluded-windows",
+			"--disable-renderer-backgrounding",
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer browser.Close()
+
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		UserAgent:         playwright.String("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+		Viewport:          &playwright.Size{Width: 1920, Height: 1080},
+		IgnoreHttpsErrors: playwright.Bool(true),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer context.Close()
+
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	results := make([]types.ScrapeResult, len(urls))
+
+	for i, url := range urls {
+		wg.Add(1)
+		go func(i int, url string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			page, err := context.NewPage()
+			if err != nil {
+				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
+				return
+			}
+			defer page.Close()
+
+			if err := page.Route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2}", func(route playwright.Route) {
+				route.Abort()
+			}); err != nil {
+				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
+				return
+			}
+
+			page.SetDefaultNavigationTimeout(5000)
+			page.SetDefaultTimeout(5000)
+
+			_, err = page.Goto(url, playwright.PageGotoOptions{
+				WaitUntil: playwright.WaitUntilStateCommit,
+			})
+			if err != nil {
+				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
+				return
+			}
+
+			// err = page.WaitForLoadState(playwright.LoadState("domcontentloaded"), playwright.PageWaitForLoadStateOptions{
+			// 	Timeout: playwright.Float(5000),
+			// })
+			_, err = page.Goto(url, playwright.PageGotoOptions{
+				WaitUntil: playwright.WaitUntilStateDomcontentloaded, // use the constant
+			})
+
+			if err != nil {
+				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
+				return
+			}
+
+			content, err := page.Content()
+			if err != nil {
+				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
+				return
+			}
+			fmt.Println("content -- ", content)
+
+			text := ExtractCleanText(content)
+			results[i] = types.ScrapeResult{URL: url, Content: text, Error: ""}
+		}(i, url)
+	}
+	wg.Wait()
+	return results, nil
+}
+
+// ExtractCleanText parses HTML and returns cleaned text content
+func ExtractCleanText(htmlContent string) string {
+	doc, err := html.Parse(strings.NewReader(htmlContent))
+	if err != nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style" || n.Data == "noscript") {
+			return
+		}
+		if n.Type == html.TextNode {
+			sb.WriteString(strings.TrimSpace(n.Data) + " ")
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+
+	text := sb.String()
+	text = strings.TrimSpace(text)
+
+	// Remove common boilerplate/redundant phrases (case-insensitive)
+	redundant := []string{"home", "contact us", "about us", "privacy policy", "terms of service"}
+	for _, r := range redundant {
+		re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(r))
+		text = re.ReplaceAllString(text, "")
+	}
+
+	// Strip extra punctuation for cleaner output
+	cleaned := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(",.;:!?", r) {
+			return -1
+		}
+		return r
+	}, text)
+
+	return strings.TrimSpace(cleaned)
 }
 
 // extractText extracts text content from HTML

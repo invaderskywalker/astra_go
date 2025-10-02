@@ -11,9 +11,14 @@ type ScrapeOptions struct {
 }
 
 type ScrapeRequest struct {
-	URL       string `json:"url"`
-	WordLimit *int   `json:"word_limit,omitempty"` // Pointer: nil means "use default"
-	// WordLimit int    `json:"word_limit"`
+	URLs      []string `json:"urls"`
+	WordLimit *int     `json:"word_limit,omitempty"` // Pointer: nil means "use default"
+}
+
+type ScrapeResult struct {
+	URL     string `json:"url"`
+	Content string `json:"content"`
+	Error   string `json:"error"`
 }
 
 type SearchResult struct {
@@ -34,5 +39,5 @@ type ScrapeResponse struct {
 	Key     string `json:"key"`
 	URL     string `json:"url"`
 	Message string `json:"message"`
-	Data    string `json:"data"`
+	Data    any    `json:"data"`
 }
