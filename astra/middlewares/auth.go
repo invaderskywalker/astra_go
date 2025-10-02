@@ -4,7 +4,6 @@ package middlewares
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"astra/astra/config"
 
@@ -23,12 +22,7 @@ func AuthMiddleware(cfg config.Config) func(http.Handler) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			parts := strings.Split(auth, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			tokenStr := parts[1]
+			tokenStr := auth
 			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, jwt.ErrSignatureInvalid

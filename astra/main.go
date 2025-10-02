@@ -29,9 +29,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
-	userDAO := dao.NewUserDAO(db.Pool)
-	chatDAO := dao.NewChatMessageDAO(db.Pool)
-
+	userDAO := dao.NewUserDAO(db.DB)
+	chatDAO := dao.NewChatMessageDAO(db.DB)
 	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
@@ -42,10 +41,8 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Mount("/auth", routes.AuthRoutes(authCtrl))
-
 	r.Mount("/users", routes.UserRoutes(userCtrl, cfg))
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
-
 	srv := &http.Server{
 		Addr:    ":8000", // Or load from env
 		Handler: r,
@@ -62,6 +59,6 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logging.Logger.Error("server shutdown error", "error", err)
+		logging.Logger.Info("server shutdown complete")
 	}
-	logging.Logger.Info("server shutdown complete")
 }

@@ -1,6 +1,8 @@
 package config
 
-import "os"
+import (
+	"os"
+)
 
 type Config struct {
 	DBUser     string
@@ -12,18 +14,24 @@ type Config struct {
 }
 
 func LoadConfig() Config {
+	// if err := godotenv.Load(); err != nil {
+	// 	log.Println("No .env file found, using system environment variables")
+	// }
+
 	return Config{
-		DBUser:     getEnv("DB_USER", "postgres"),
-		DBPassword: getEnv("DB_PASSWORD", ""), // empty if you don't have one
-		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnv("DB_PORT", "5432"),
-		DBName:     getEnv("DB_NAME", "astra_main"),
-		JWTSecret:  getEnv("JWT_SECRET", "secret"),
+		DBUser:     getEnv("DB_USER", ""),
+		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBHost:     getEnv("DB_HOST", ""),
+		DBPort:     getEnv("DB_PORT", ""),
+		DBName:     getEnv("DB_NAME", ""),
+		JWTSecret:  getEnv("JWT_SECRET", ""),
 	}
 }
 
 func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
+	value := os.Getenv(key)
+	// fmt.Println("get env ", key, value)
+	if value != "" {
 		return value
 	}
 	return fallback

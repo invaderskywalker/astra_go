@@ -1,29 +1,25 @@
-// astra/sources/psql/dao/dao.user.go
 package dao
 
 import (
 	"astra/astra/sources/psql/models"
 	"context"
-	"database/sql"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 )
 
 type UserDAO struct {
-	DB *pgxpool.Pool
+	DB *gorm.DB
 }
 
-func NewUserDAO(db *pgxpool.Pool) *UserDAO {
+func NewUserDAO(db *gorm.DB) *UserDAO {
 	return &UserDAO{DB: db}
 }
 
 func (dao *UserDAO) GetUserByID(ctx context.Context, id int) (*models.User, error) {
-	query := "SELECT id, username, email, full_name FROM users WHERE id = $1"
-	row := dao.DB.QueryRow(ctx, query, id)
 	var user models.User
-	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.FullName)
-	if err == sql.ErrNoRows {
-		return nil, nil // Consistent with GetUserByUsername
+	err := dao.DB.WithContext(ctx).First(&user, id).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil // Consistent with original
 	}
 	if err != nil {
 		return nil, err
@@ -32,11 +28,9 @@ func (dao *UserDAO) GetUserByID(ctx context.Context, id int) (*models.User, erro
 }
 
 func (dao *UserDAO) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	query := "SELECT id, username, email, full_name FROM users WHERE username = $1"
-	row := dao.DB.QueryRow(ctx, query, username)
 	var user models.User
-	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.FullName)
-	if err == sql.ErrNoRows {
+	err := dao.DB.WithContext(ctx).Where("username = ?", username).First(&user).Error
+	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	if err != nil {
@@ -46,10 +40,12 @@ func (dao *UserDAO) GetUserByUsername(ctx context.Context, username string) (*mo
 }
 
 func (dao *UserDAO) CreateUser(ctx context.Context, username, email string, fullName *string) (*models.User, error) {
-	query := "INSERT INTO users (username, email, full_name) VALUES ($1, $2, $3) RETURNING id, username, email, full_name"
-	row := dao.DB.QueryRow(ctx, query, username, email, fullName)
-	var user models.User
-	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.FullName)
+	user := models.User{
+		Username: username,
+		Email:    email,
+		FullName: fullName,
+	}
+	err := dao.DB.WithContext(ctx).Create(&user).Error
 	if err != nil {
 		return nil, err
 	}
@@ -57,20 +53,10 @@ func (dao *UserDAO) CreateUser(ctx context.Context, username, email string, full
 }
 
 func (dao *UserDAO) GetAllUsers(ctx context.Context) ([]models.User, error) {
-	query := "SELECT id, username, email, full_name FROM users"
-	rows, err := dao.DB.Query(ctx, query)
+	var users []models.User
+	err := dao.DB.WithContext(ctx).Find(&users).Error
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-	var users []models.User
-	for rows.Next() {
-		var user models.User
-		err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.FullName)
-		if err != nil {
-			return nil, err
-		}
-		users = append(users, user)
 	}
 	return users, nil
 }

@@ -1,8 +1,8 @@
 package models
 
 type User struct {
-	ID       int     `json:"id"`
-	Username string  `json:"username"`
-	Email    string  `json:"email"`
-	FullName *string `json:"full_name,omitempty"`
+	ID       int     `json:"id" gorm:"primaryKey;autoIncrement"`
+	Username string  `json:"username" gorm:"type:varchar(255);not null"`
+	Email    string  `json:"email" gorm:"type:varchar(255);not null"`
+	FullName *string `json:"full_name,omitempty" gorm:"type:varchar(255)"`
 }
