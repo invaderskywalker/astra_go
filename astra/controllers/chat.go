@@ -3,8 +3,8 @@ package controllers
 
 import (
 	"astra/astra/sources/psql/dao"
-	"astra/astra/types"
 	httputils "astra/astra/utils/http"
+	"astra/astra/utils/types"
 	"bufio"
 	"context"
 	"encoding/json"

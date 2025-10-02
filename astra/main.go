@@ -6,6 +6,7 @@ import (
 	"astra/astra/routes"
 	"astra/astra/sources/psql"
 	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/storage"
 	"astra/astra/utils/logging"
 	"context"
 	"net/http"
@@ -34,15 +35,31 @@ func main() {
 	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
+
+	// Initialize MinIO
+	minioClient, err := storage.NewMinIOClient(cfg)
+	if err != nil {
+		logging.Logger.Error("minio connection error", "error", err)
+		os.Exit(1)
+	}
+	scrapeCtrl, err := controllers.NewScrapeController(minioClient)
+	if err != nil {
+		logging.Logger.Error("minio connection error", "error", err)
+		os.Exit(1)
+	}
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+
 	r.Mount("/auth", routes.AuthRoutes(authCtrl))
 	r.Mount("/users", routes.UserRoutes(userCtrl, cfg))
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
+	r.Mount("/test", routes.ScrapeRoutes(scrapeCtrl, cfg))
+
 	srv := &http.Server{
 		Addr:    ":8000", // Or load from env
 		Handler: r,

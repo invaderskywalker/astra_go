@@ -3,7 +3,7 @@ package routes
 
 import (
 	"astra/astra/controllers"
-	"astra/astra/types"
+	"astra/astra/utils/types"
 	"encoding/json"
 	"net/http"
 

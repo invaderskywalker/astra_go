@@ -3,8 +3,8 @@ package routes
 import (
 	"astra/astra/controllers"
 	"astra/astra/middlewares"
-	"astra/astra/types"
 	"astra/astra/utils/logging"
+	"astra/astra/utils/types"
 	"encoding/json"
 	"net/http"
 

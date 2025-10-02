@@ -39,7 +39,11 @@ func NewDatabase(ctx context.Context, cfg config.Config) (*Database, error) {
 	fmt.Println("Connected to DB:", currentDB)
 
 	// Auto-migrate models (automatic schema creation)
-	err = db.WithContext(ctx).AutoMigrate(&models.User{}, &models.ChatMessage{})
+	err = db.WithContext(ctx).
+		AutoMigrate(
+			&models.User{},
+			&models.ChatMessage{},
+		)
 	fmt.Println("err in migrate", err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate: %w", err)

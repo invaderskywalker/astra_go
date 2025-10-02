@@ -1,4 +1,4 @@
-// astra/types/create_user_request.go (new)
+// astra/types/user.go
 package types
 
 type CreateUserRequest struct {
