@@ -1,4 +1,3 @@
-// astra/routes/user.go (new)
 package routes
 
 import (
@@ -9,13 +8,15 @@ import (
 	"net/http"
 	"strconv"
 
+	"astra/astra/config"
+
 	"github.com/go-chi/chi/v5"
 )
 
-func UserRoutes(ctrl *controllers.UserController) chi.Router {
+func UserRoutes(ctrl *controllers.UserController, cfg config.Config) chi.Router {
 	r := chi.NewRouter()
 	r.Group(func(gr chi.Router) {
-		gr.Use(middlewares.AuthMiddleware)
+		gr.Use(middlewares.AuthMiddleware(cfg)) // ✅ pass config
 		gr.Get("/fetch/{user_id}", func(w http.ResponseWriter, r *http.Request) {
 			idStr := chi.URLParam(r, "user_id")
 			id, err := strconv.Atoi(idStr)

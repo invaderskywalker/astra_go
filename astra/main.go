@@ -1,4 +1,4 @@
-package astra
+package main
 
 import (
 	"astra/astra/config"
@@ -31,7 +31,8 @@ func main() {
 	defer db.Close()
 	userDAO := dao.NewUserDAO(db.Pool)
 	chatDAO := dao.NewChatMessageDAO(db.Pool)
-	authCtrl := controllers.NewAuthController(userDAO)
+
+	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
 	r := chi.NewRouter()
@@ -41,8 +42,10 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Mount("/auth", routes.AuthRoutes(authCtrl))
-	r.Mount("/users", routes.UserRoutes(userCtrl))
-	r.Mount("/chat", routes.ChatRoutes(chatCtrl))
+
+	r.Mount("/users", routes.UserRoutes(userCtrl, cfg))
+	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
+
 	srv := &http.Server{
 		Addr:    ":8000", // Or load from env
 		Handler: r,

@@ -1,4 +1,4 @@
-// astra/controllers/auth.go (new folder and file)
+// astra/controllers/auth.go
 package controllers
 
 import (
@@ -6,17 +6,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"astra/astra/config"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type AuthController struct {
 	userDAO *dao.UserDAO
+	cfg     config.Config
 }
 
-func NewAuthController(userDAO *dao.UserDAO) *AuthController {
-	return &AuthController{userDAO: userDAO}
+func NewAuthController(userDAO *dao.UserDAO, cfg config.Config) *AuthController {
+	return &AuthController{
+		userDAO: userDAO,
+		cfg:     cfg,
+	}
 }
 
 func (c *AuthController) Login(ctx context.Context, username string) (string, error) {
@@ -37,5 +41,5 @@ func (c *AuthController) Login(ctx context.Context, username string) (string, er
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(config.LoadConfig().JWT_SECRET))
+	return token.SignedString([]byte(c.cfg.JWTSecret))
 }

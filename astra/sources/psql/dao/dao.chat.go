@@ -1,7 +1,7 @@
 package dao
 
 import (
-	models "astra/astra/sources/psql/model"
+	"astra/astra/sources/psql/models"
 	"context"
 
 	"github.com/google/uuid"

@@ -1,8 +1,9 @@
-// astra/controllers/user.go (new)
+// astra/controllers/user.go
 package controllers
 
 import (
 	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/psql/models"
 	"context"
 )
 
@@ -14,23 +15,14 @@ func NewUserController(dao *dao.UserDAO) *UserController {
 	return &UserController{dao: dao}
 }
 
-func (c *UserController) GetUser(ctx context.Context, id int) (map[string]interface{}, error) {
+func (c *UserController) GetUser(ctx context.Context, id int) (*models.User, error) {
 	return c.dao.GetUserByID(ctx, id)
 }
 
-func (c *UserController) GetAllUsers(ctx context.Context) ([]map[string]interface{}, error) {
+func (c *UserController) GetAllUsers(ctx context.Context) ([]models.User, error) {
 	return c.dao.GetAllUsers(ctx)
 }
 
-func (c *UserController) CreateUser(ctx context.Context, username, email string, fullName *string) (map[string]interface{}, error) {
-	user, err := c.dao.CreateUser(ctx, username, email, fullName)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"id":        user.ID,
-		"username":  user.Username,
-		"email":     user.Email,
-		"full_name": user.FullName,
-	}, nil
+func (c *UserController) CreateUser(ctx context.Context, username, email string, fullName *string) (*models.User, error) {
+	return c.dao.CreateUser(ctx, username, email, fullName)
 }

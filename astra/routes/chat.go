@@ -1,4 +1,3 @@
-// astra/routes/chat.go
 package routes
 
 import (
@@ -9,17 +8,17 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/coder/websocket" // Updated import
+	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
 	"astra/astra/config"
 )
 
-func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
+func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router {
 	r := chi.NewRouter()
 	r.Group(func(gr chi.Router) {
-		gr.Use(middlewares.AuthMiddleware)
+		gr.Use(middlewares.AuthMiddleware(cfg)) // ✅ pass config
 		gr.Post("/", func(w http.ResponseWriter, r *http.Request) {
 			var req types.ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -42,6 +41,7 @@ func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
 			return
 		}
 		defer conn.Close(websocket.StatusInternalError, "internal error")
+
 		ctx := r.Context()
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
@@ -52,6 +52,7 @@ func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
 			conn.Close(websocket.StatusUnsupportedData, "unsupported data")
 			return
 		}
+
 		var input struct {
 			Token       string            `json:"token"`
 			ChatRequest types.ChatRequest `json:"chat_request"`
@@ -60,20 +61,23 @@ func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
 			conn.Write(ctx, websocket.MessageText, []byte(`{"error":"invalid json"}`))
 			return
 		}
+
 		token, err := jwt.Parse(input.Token, func(token *jwt.Token) (interface{}, error) {
-			return []byte(config.LoadConfig().JWT_SECRET), nil
+			return []byte(cfg.JWTSecret), nil // ✅ use cfg, not LoadConfig
 		})
 		if err != nil || !token.Valid {
 			conn.Write(ctx, websocket.MessageText, []byte(`{"error":"invalid token"}`))
 			conn.Close(websocket.StatusPolicyViolation, "invalid token")
 			return
 		}
+
 		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok || !claims.Valid() {
+		if !ok {
 			conn.Write(ctx, websocket.MessageText, []byte(`{"error":"invalid claims"}`))
 			conn.Close(websocket.StatusPolicyViolation, "invalid claims")
 			return
 		}
+
 		userIDf, ok := claims["user_id"].(float64)
 		if !ok {
 			conn.Write(ctx, websocket.MessageText, []byte(`{"error":"invalid user_id"}`))
@@ -81,6 +85,7 @@ func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
 			return
 		}
 		userID := int(userIDf)
+
 		ch, errCh := ctrl.ChatStream(ctx, userID, input.ChatRequest)
 		go func() {
 			if err := <-errCh; err != nil {
@@ -89,6 +94,7 @@ func ChatRoutes(ctrl *controllers.ChatController) chi.Router {
 				conn.Close(websocket.StatusInternalError, "stream error")
 			}
 		}()
+
 		for chunk := range ch {
 			if err := conn.Write(ctx, websocket.MessageText, []byte(chunk)); err != nil {
 				logging.Logger.Error("websocket write error", "error", err)
