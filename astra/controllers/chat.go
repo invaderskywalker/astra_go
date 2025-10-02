@@ -33,7 +33,7 @@ func (c *ChatController) Chat(ctx context.Context, userID int, req types.ChatReq
 		return nil, err
 	}
 	llmReq := map[string]interface{}{
-		"model":    "gpt-oss:120b-cloud",
+		"model":    "llama3:8b",
 		"messages": history,
 		"stream":   false,
 	}
@@ -78,7 +78,7 @@ func (c *ChatController) ChatStream(ctx context.Context, userID int, req types.C
 		return ch, errCh
 	}
 	llmReq := map[string]interface{}{
-		"model":    "gpt-oss:120b-cloud",
+		"model":    "llama3:8b",
 		"messages": history,
 		"stream":   true,
 	}
