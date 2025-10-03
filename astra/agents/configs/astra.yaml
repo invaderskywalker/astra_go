@@ -111,18 +111,10 @@ user_intents_classes:
     Style: Empathetic, concise, emojis (❓)
 
 available_data_sources:
-  - fetch_user_context
-  - fetch_repo_context
-  - simulate_code_execution
+  
 
 available_actions:
-  - apply_code_edits
-  - switch_git_branch
-  - replicate_db_for_branch
-  - update_db_connection
-  - create_new_repo
-  - store_user_context
-  - store_user_interaction
+  
 
 user_cta_instructions: |
   Provide actionable next steps as JSON 'next_prompts'.

@@ -5,6 +5,7 @@ import (
 	"astra/astra/agents/configs"
 	"astra/astra/agents/getters"
 	"astra/astra/services/llm"
+	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
 	"encoding/json"
@@ -73,14 +74,30 @@ func (a *BaseAgent) handleEvents() {
 	}
 }
 
-func (a *BaseAgent) constructPlanningPrompt(query string) map[string]interface{} {
-	systemPrompt := fmt.Sprintf(`
-You are %s. Analyze query: %s
-Available sources: %v
-Available actions: %v
-Decision process: %s
-Output JSON: %s
-`, a.Config.AgentName, query, a.Config.AvailableDataSources, a.Config.AvailableActions, a.Config.DecisionProcess, a.Config.PlanningPrompt)
+func (a *BaseAgent) createExecutionPlan(query string) (plan map[string]interface{}) {
+	// Default error return if something goes wrong
+	defer func() {
+		if r := recover(); r != nil {
+			logging.ErrorLogger.Error("Planning failure", zap.Any("recover", r))
+			plan = map[string]interface{}{"error": fmt.Sprint(r)}
+		}
+	}()
+
+	systemPrompt := fmt.Sprintf(
+		`
+			You are %s. Analyze query: %s
+			Available sources: %v
+			Available actions: %v
+			Decision process: %s
+			Output JSON: %s
+		`,
+		a.Config.AgentName,
+		query,
+		a.Config.AvailableDataSources,
+		a.Config.AvailableActions,
+		a.Config.DecisionProcess,
+		a.Config.PlanOutputStructure,
+	)
 
 	req := llm.ChatRequest{
 		Model:    DefaultModel,
@@ -90,14 +107,12 @@ Output JSON: %s
 
 	resp, err := a.LLM.Run(context.Background(), req)
 	if err != nil {
-		logging.ErrorLogger.Error("Planning error", zap.Error(err))
-		return map[string]interface{}{"error": "failed to create plan"}
+		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
-
-	var plan map[string]interface{}
-	if err := json.Unmarshal([]byte(resp), &plan); err != nil {
-		logging.ErrorLogger.Error("Plan unmarshal error", zap.Error(err))
-		return map[string]interface{}{"error": "invalid plan format"}
+	fmt.Println("resp", resp)
+	respJSON := jsonutils.ExtractJSON(resp)
+	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
+		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
 	a.storeState("planning", plan)
 	a.Plans = append(a.Plans, plan)
@@ -110,7 +125,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		defer close(ch)
 
 		a.stepCh <- map[string]interface{}{"message": "Creating execution plan"}
-		plan := a.constructPlanningPrompt(query)
+		plan := a.createExecutionPlan(query)
 		if plan["error"] != nil {
 			ch <- `{"error":"` + fmt.Sprint(plan["error"]) + `"}`
 			return
@@ -122,7 +137,6 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		a.stepCh <- map[string]interface{}{"message": "Preparing response"}
 		respCh, err := a.LLM.RunStream(context.Background(), a.buildResponseReq(results, query))
 		if err != nil {
-			// logging.ErrorLogger.Error("Response stream error", zap.Error(err))
 			ch <- `{"error":"failed to stream response"}`
 			return
 		}
@@ -142,24 +156,24 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interfac
 		"action_results":       map[string]interface{}{},
 	}
 
-	// Safe extraction
-	if ds, ok := plan["data_sources_to_trigger_with_source_params"].(map[string]interface{}); ok {
-		for name, params := range ds {
-			if pmap, ok := params.(map[string]interface{}); ok {
-				result := a.runDataSource(name, pmap)
-				results["data_sources_results"].(map[string]interface{})[name] = result
-			}
-		}
-	}
+	// // Safe extraction
+	// if ds, ok := plan["data_sources_to_trigger_with_source_params"].(map[string]interface{}); ok {
+	// 	for name, params := range ds {
+	// 		if pmap, ok := params.(map[string]interface{}); ok {
+	// 			result := a.runDataSource(name, pmap)
+	// 			results["data_sources_results"].(map[string]interface{})[name] = result
+	// 		}
+	// 	}
+	// }
 
-	if acts, ok := plan["actions_to_trigger_with_action_params"].(map[string]interface{}); ok {
-		for name, params := range acts {
-			if pmap, ok := params.(map[string]interface{}); ok {
-				result := a.runAction(name, pmap)
-				results["action_results"].(map[string]interface{})[name] = result
-			}
-		}
-	}
+	// if acts, ok := plan["actions_to_trigger_with_action_params"].(map[string]interface{}); ok {
+	// 	for name, params := range acts {
+	// 		if pmap, ok := params.(map[string]interface{}); ok {
+	// 			result := a.runAction(name, pmap)
+	// 			results["action_results"].(map[string]interface{})[name] = result
+	// 		}
+	// 	}
+	// }
 
 	return results
 }
@@ -261,4 +275,5 @@ Instructions: %s
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
 	// Store state in DB (stub for now)
+	fmt.Println("storeState ", key, value)
 }

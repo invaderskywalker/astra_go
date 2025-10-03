@@ -18,12 +18,12 @@ func AuthRoutes(ctrl *controllers.AuthController) chi.Router {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		token, err := ctrl.Login(r.Context(), req.Username)
+		token, err, user_id := ctrl.Login(r.Context(), req.Username)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"token": token})
+		json.NewEncoder(w).Encode(map[string]any{"token": token, "user_id": user_id})
 	})
 	return r
 }
