@@ -2,7 +2,6 @@
 package configs
 
 import (
-	"astra/astra/utils/logging"
 	"encoding/json"
 	"os"
 )
@@ -25,13 +24,13 @@ type AgentConfig struct {
 func LoadConfig() *AgentConfig {
 	fileBytes, err := os.ReadFile("astra/agents/configs/agent.json")
 	if err != nil {
-		logging.Logger.Error("Config load error", "error", err)
+		// logging.Logger.Error("Config load error", "error", err)
 		return &AgentConfig{} // Default fallback
 	}
 
 	var cfg AgentConfig
 	if err := json.Unmarshal(fileBytes, &cfg); err != nil {
-		logging.Logger.Error("Config unmarshal error", "error", err)
+		// logging.Logger.Error("Config unmarshal error", "error", err)
 		return &AgentConfig{}
 	}
 	return &cfg

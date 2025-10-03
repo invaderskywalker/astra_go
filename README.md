@@ -41,3 +41,13 @@ You should now see something like:
 uuid-ossp | 1.1     | public     | generate universally unique identifiers (UUIDs)
 
 
+
+
+after installing - run 
+minio server ~/minio-data --console-address ":9001" --address ":9000"
+
+and then
+ mc alias set 'myminio' 'http://192.168.1.27:9000' 'minioadmin' 'minioadmin'
+ mc alias set local http://localhost:9000 minioadmin minioadmin
+ 
+then i can use it in code.. 

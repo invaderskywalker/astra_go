@@ -4,10 +4,12 @@ package controllers
 import (
 	"astra/astra/sources/psql/dao"
 	httputils "astra/astra/utils/http"
+	"astra/astra/utils/logging"
 	"astra/astra/utils/types"
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -56,6 +58,8 @@ func (c *ChatController) Chat(ctx context.Context, userID int, req types.ChatReq
 }
 
 func (c *ChatController) ChatStream(ctx context.Context, userID int, req types.ChatRequest) (chan string, chan error) {
+	fmt.Println("ChatStream")
+	defer logging.LogDuration(ctx, "ChatStream")()
 	errCh := make(chan error, 1)
 	ch := make(chan string)
 

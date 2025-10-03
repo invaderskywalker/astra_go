@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 
 	"astra/astra/config"
 )
@@ -37,7 +38,7 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
-			logging.Logger.Error("websocket accept error", "error", err)
+			logging.ErrorLogger.Error("websocket accept error", zap.Error(err))
 			return
 		}
 		defer conn.Close(websocket.StatusInternalError, "internal error")
@@ -45,7 +46,7 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 		ctx := r.Context()
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
-			logging.Logger.Error("websocket read error", "error", err)
+			logging.ErrorLogger.Error("websocket read error", zap.Error(err))
 			return
 		}
 		if typ != websocket.MessageText {
@@ -89,7 +90,7 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 		ch, errCh := ctrl.ChatStream(ctx, userID, input.ChatRequest)
 		go func() {
 			if err := <-errCh; err != nil {
-				logging.Logger.Error("chat stream error", "error", err)
+				logging.ErrorLogger.Error("chat stream error", zap.Error(err))
 				conn.Write(ctx, websocket.MessageText, []byte(`{"error":"`+err.Error()+`"}`))
 				conn.Close(websocket.StatusInternalError, "stream error")
 			}
@@ -97,7 +98,7 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 
 		for chunk := range ch {
 			if err := conn.Write(ctx, websocket.MessageText, []byte(chunk)); err != nil {
-				logging.Logger.Error("websocket write error", "error", err)
+				logging.ErrorLogger.Error("websocket write error", zap.Error(err))
 				return
 			}
 		}

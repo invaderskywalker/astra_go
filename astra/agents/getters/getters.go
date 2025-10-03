@@ -2,7 +2,6 @@
 package getters
 
 import (
-	"astra/astra/utils/logging"
 	"os/exec"
 )
 
@@ -22,7 +21,7 @@ func (g *DataGetters) fetchCodebaseTree(params map[string]interface{}) interface
 	cmd := exec.Command("tree", path, "-I", "venv")
 	out, err := cmd.Output()
 	if err != nil {
-		logging.Logger.Error("fetch_codebase_tree error", "error", err)
+		// logging.Logger.Error("fetch_codebase_tree error", "error", err)
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return string(out)

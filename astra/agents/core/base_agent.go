@@ -5,7 +5,6 @@ import (
 	"astra/astra/agents/actions"
 	"astra/astra/agents/getters"
 	"astra/astra/services/llm"
-	"astra/astra/utils/logging"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,7 +57,7 @@ func NewBaseAgent(userID int, sessionID string, agentName string) *BaseAgent {
 		responseCh:  make(chan string, 10),
 		dataGetters: getters.NewDataGetters(),
 	}
-	logging.Logger.Info("BaseAgent init", agent.LogInfo)
+	// logging.Logger.Info("BaseAgent init", agent.LogInfo)
 	go agent.handleEvents()
 	return agent
 }
@@ -68,10 +67,12 @@ func (a *BaseAgent) handleEvents() {
 		select {
 		case step := <-a.stepCh:
 			// Emit to WS or log
-			logging.Logger.Info("Step update", step)
+			fmt.Println("step ", step)
+			// logging.Logger.Info("Step update", step)
 		case resp := <-a.responseCh:
 			// Stream response
-			logging.Logger.Info("Response chunk", map[string]string{"chunk": resp})
+			fmt.Println("step ", resp)
+			// logging.Logger.Info("Response chunk", map[string]string{"chunk": resp})
 		}
 	}
 }
@@ -93,7 +94,7 @@ Output JSON: %s
 
 	resp, err := a.LLM.Run(context.Background(), req)
 	if err != nil {
-		logging.Logger.Error("Planning error", "error", err)
+		// logging.Logger.Error("Planning error", "error", err)
 		return nil
 	}
 

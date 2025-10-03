@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 	defer cancel()
 	db, err := psql.NewDatabase(ctx, cfg)
 	if err != nil {
-		logging.Logger.Error("database connection error", "error", err)
+		logging.ErrorLogger.Error("database connection error", zap.Error(err))
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -36,15 +37,17 @@ func main() {
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
 
+	logging.AppLogger.Info("Started")
+
 	// Initialize MinIO
 	minioClient, err := storage.NewMinIOClient(cfg)
 	if err != nil {
-		logging.Logger.Error("minio connection error", "error", err)
+		logging.ErrorLogger.Error("minio connection error", zap.Error(err))
 		os.Exit(1)
 	}
 	scrapeCtrl, err := controllers.NewScrapeController(minioClient)
 	if err != nil {
-		logging.Logger.Error("minio connection error", "error", err)
+		logging.ErrorLogger.Error("scrapeCtrl initiation error", zap.Error(err))
 		os.Exit(1)
 	}
 
@@ -66,7 +69,7 @@ func main() {
 	}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logging.Logger.Error("server listen error", "error", err)
+			logging.ErrorLogger.Error("server listen error", zap.Error(err))
 		}
 	}()
 	sigCh := make(chan os.Signal, 1)
@@ -75,7 +78,7 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logging.Logger.Error("server shutdown error", "error", err)
-		logging.Logger.Info("server shutdown complete")
+		logging.ErrorLogger.Error("server shutdown error", zap.Error(err))
+		logging.AppLogger.Info("server shutdown complete")
 	}
 }

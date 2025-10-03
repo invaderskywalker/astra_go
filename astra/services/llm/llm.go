@@ -3,8 +3,10 @@ package llm
 
 import (
 	httputils "astra/astra/utils/http"
+	"astra/astra/utils/logging"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 )
 
@@ -34,6 +36,7 @@ type ChatResponse struct {
 }
 
 func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error) {
+	defer logging.LogDuration(ctx, "llm_service_run")()
 	var resp ChatResponse
 	if err := httputils.PostJSON(c.baseURL+"/chat", req, &resp); err != nil {
 		return "", err
@@ -42,6 +45,8 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 }
 
 func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, <-chan error) {
+	fmt.Println("llm_service_run_stream")
+	defer logging.LogDuration(ctx, "llm_service_run_stream")()
 	ch := make(chan string)
 	errCh := make(chan error, 1)
 
