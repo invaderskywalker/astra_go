@@ -3,6 +3,7 @@ package configs
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -21,8 +22,9 @@ type AgentConfig struct {
 	WebAPIKey        string            `json:"web_api_key,omitempty"` // For later web integration
 }
 
-func LoadConfig() *AgentConfig {
-	fileBytes, err := os.ReadFile("astra/agents/configs/agent.json")
+func LoadConfig(agentName string) *AgentConfig {
+	filepath := fmt.Sprintf("astra/agents/configs/%s.json", agentName)
+	fileBytes, err := os.ReadFile(filepath)
 	if err != nil {
 		// logging.Logger.Error("Config load error", "error", err)
 		return &AgentConfig{} // Default fallback

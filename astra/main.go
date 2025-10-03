@@ -31,15 +31,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
 	userDAO := dao.NewUserDAO(db.DB)
 	chatDAO := dao.NewChatMessageDAO(db.DB)
 	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
+	agentCtrl := controllers.NewAgentsController(db.DB)
 
 	logging.AppLogger.Info("Started")
 
-	// Initialize MinIO
 	minioClient, err := storage.NewMinIOClient(cfg)
 	if err != nil {
 		logging.ErrorLogger.Error("minio connection error", zap.Error(err))
@@ -61,10 +62,11 @@ func main() {
 	r.Mount("/auth", routes.AuthRoutes(authCtrl))
 	r.Mount("/users", routes.UserRoutes(userCtrl, cfg))
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
+	r.Mount("/agents", routes.AgentRoutes(agentCtrl, cfg)) // Add agents route
 	r.Mount("/test", routes.ScrapeRoutes(scrapeCtrl, cfg))
 
 	srv := &http.Server{
-		Addr:    ":8000", // Or load from env
+		Addr:    ":8000",
 		Handler: r,
 	}
 	go func() {
@@ -79,6 +81,6 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logging.ErrorLogger.Error("server shutdown error", zap.Error(err))
-		logging.AppLogger.Info("server shutdown complete")
 	}
+	logging.AppLogger.Info("server shutdown complete")
 }
