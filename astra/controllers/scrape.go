@@ -2,8 +2,8 @@
 package controllers
 
 import (
+	"astra/astra/services/scraper"
 	"astra/astra/sources/storage"
-	"astra/astra/utils/scraper"
 	"astra/astra/utils/types"
 	"context"
 	"crypto/md5"
