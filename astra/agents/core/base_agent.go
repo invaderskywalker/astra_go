@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -152,10 +153,16 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			- Ensure actions and parameters align with the user's query and decision process.
 			- Stick to the structured outputs specified in the decision process.
 
+		## A rough example of mind_map_steps_in_natural_language to ensure your output format is correct.
+			"mind_map_steps_in_natural_language": [
+				"plain english statement 1",
+				"plain english next step",...
+			]
+
 		---
 
-			### User Query
-			%s
+		### User Query
+		%s
 		`,
 		a.Config.AgentName,
 		a.Config.AgentRole,
@@ -301,24 +308,29 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 	go func() {
 		defer close(ch)
 
+		// keep internal log update as before
 		a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
 		roughPlan := a.createRoughPlan(query)
 		if roughPlan["error"] != nil {
-			ch <- `{"error":"` + fmt.Sprint(roughPlan["error"]) + `"}`
+			// send structured error event to client
+			ch <- a.formatEvent("error", map[string]interface{}{"message": fmt.Sprint(roughPlan["error"])})
 			return
 		}
+
+		// send a small intermediate event saying plan created (client can show progress)
+		ch <- a.formatEvent("intermediate", map[string]interface{}{"message": "Plan created"})
 
 		// Safely extract the steps list from the rough plan
 		var stepsSlice []interface{}
 		if dp, ok := roughPlan["decision_process_output"].(map[string]interface{}); ok {
-			if rawSteps, ok := dp["mind_map_execution_statements"]; ok {
+			if rawSteps, ok := dp["mind_map_steps_in_natural_language"]; ok {
 				if castSteps, ok := rawSteps.([]interface{}); ok {
 					stepsSlice = castSteps
 				}
 			}
 		}
 		if stepsSlice == nil {
-			ch <- `{"error":"no steps found in rough plan"}` // consistent error shape
+			ch <- a.formatEvent("error", map[string]interface{}{"message": "no steps found in rough plan"})
 			return
 		}
 
@@ -329,37 +341,68 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			stepText, ok := s.(string)
 			if !ok {
 				a.stepCh <- map[string]interface{}{"message": "Skipping invalid step format", "index": i}
+				// send intermediate notice to client
+				ch <- a.formatEvent("intermediate", map[string]interface{}{
+					"message": "skipping invalid step format", "index": i,
+				})
 				continue
 			}
+
+			// send intermediate event: step expansion starting
+			ch <- a.formatEvent("intermediate", map[string]interface{}{
+				"phase":      "expanding_step",
+				"step_index": i + 1,
+				"step_text":  stepText,
+			})
 
 			a.stepCh <- map[string]interface{}{"message": "Expanding step", "step_index": i + 1, "step": stepText}
 			expanded := a.expandStep(stepText, i+1)
 			if expanded == nil {
-				// safety
+				// safety: report and continue
 				results = append(results, map[string]interface{}{
 					"step_index": i + 1, "status": "error", "error": "expandStep returned nil",
+				})
+				ch <- a.formatEvent("intermediate", map[string]interface{}{
+					"phase": "expand_error", "index": i + 1, "error": "expandStep returned nil",
 				})
 				continue
 			}
 			if errVal, ok := expanded["error"]; ok && errVal != nil {
-				// expansion error: stream and abort further processing
+				// expansion error: send structured error event and abort further processing
 				errStr := fmt.Sprint(errVal)
-				ch <- `{"error":"` + errStr + `"}`
+				ch <- a.formatEvent("error", map[string]interface{}{"message": errStr})
 				return
 			}
+
+			// send expanded step to client (intermediate)
+			ch <- a.formatEvent("intermediate", map[string]interface{}{
+				"phase":    "expanded_step",
+				"index":    i + 1,
+				"expanded": expanded,
+			})
 
 			// Determine if expanded is a full plan or a single-step object.
 			var planToExec map[string]interface{}
 			if _, hasDetailed := expanded["detailed_plan"]; hasDetailed {
-				// assume expanded already fits executePlan input
 				planToExec = expanded
 			} else {
-				// wrap single-step expansion into a plan
 				planToExec = map[string]interface{}{"detailed_plan": []interface{}{expanded}}
 			}
 
+			// inform client that execution is starting for this step
+			ch <- a.formatEvent("intermediate", map[string]interface{}{
+				"phase": "executing_step", "index": i + 1,
+			})
 			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": i + 1}
 			execRes := a.executePlan(planToExec)
+
+			// send the execution result as intermediate event
+			ch <- a.formatEvent("intermediate", map[string]interface{}{
+				"phase":   "executed_step",
+				"index":   i + 1,
+				"execRes": execRes,
+			})
+
 			// append result and continue
 			results = append(results, map[string]interface{}{
 				"step_index": i + 1,
@@ -381,14 +424,18 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		respCh, err := a.LLM.RunStream(context.Background(), respReq)
 		if err != nil {
 			a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
-			ch <- `{"error":"failed to stream response"}`
+			ch <- a.formatEvent("error", map[string]interface{}{"message": "failed to stream response", "error": err.Error()})
 			return
 		}
+
+		// wrap each chunk in a response_chunk envelope so clients can distinguish it
 		for chunk := range respCh {
-			// forward chunks to both internal logger and caller channel
 			a.responseCh <- chunk
-			ch <- chunk
+			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
 		}
+
+		// optional: final completion event
+		ch <- a.formatEvent("completed", map[string]interface{}{"message": "Process completed", "steps": len(results)})
 	}()
 	return ch
 }
@@ -465,7 +512,6 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interfac
 	return results
 }
 
-// Updated buildResponseReq - includes RoughPlan, ExecutionPlans, Available Actions, Decision Process and Results
 func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query string) llm.ChatRequest {
 	// Prepare serialized pieces (best-effort - fall back to string representation on error)
 	resultsJSON, err := json.MarshalIndent(results, "", "  ")
@@ -485,11 +531,11 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 	}
 
 	// action summaries (name + description) to keep prompt size bounded
-	actionSummaries := a.dataActions.ListActionSummaries()
-	actionsJSON, err := json.MarshalIndent(actionSummaries, "", "  ")
-	if err != nil {
-		actionsJSON = []byte(fmt.Sprintf(`"__actions_unavailable__": %q`, err.Error()))
-	}
+	// actionSummaries := a.dataActions.ListActionSummaries()
+	// actionsJSON, err := json.MarshalIndent(actionSummaries, "", "  ")
+	// if err != nil {
+	// 	actionsJSON = []byte(fmt.Sprintf(`"__actions_unavailable__": %q`, err.Error()))
+	// }
 
 	// build a human-readable stages description from config
 	var stagesDesc string
@@ -503,8 +549,8 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		You are %s — %s.
 
 		You will produce a clear, helpful final response to the user's query.  Use the provided execution results and context to generate:
-		1) A concise summary of what was done and why (1-3 short paragraphs).
-		2) A list of outcomes and any important outputs or files created/changed.
+		1) A concise summary of what was done and why (1-3 short points).
+		2) A list of any important outcomes (section not mandatory).
 		3) Any actions that failed or need human attention (with short remediation steps).
 		4) Next recommended steps (if any) and any required clarifications.
 
@@ -520,25 +566,17 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		User Query:
 		%s
 
-		Available action summaries (name + description):
+
+		Rough plan (the plan the agent created from the query):
 		%s
 
-		Decision process (description & stages):
-		%s
-
-		Rough plan template (the plan the agent created from the query; may include planned steps and rationale):
-		%s
-
-		Previously expanded execution plans (detailed steps produced for execution):
+		All detailed execution plans (detailed steps produced for execution):
 		%s
 
 		Execution results (what ran and observed outputs - use this as the definitive log of what happened):
 		%s
 
-		Output schemas (for reference, used when the agent originally created the plan):
-		Plan output schema: %s
 
-		Execution step output schema: %s
 
 		---
 
@@ -546,23 +584,21 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		- Be accurate and concise.
 		- Highlight failures and partial results first.
 		- For each failed or partial item, include a recommended remediation or a short verification step.
-		- If user follow-up / clarification is required, clearly list the questions.
+		- If user follow-up / clarification is required, clearly ask the questions.
 		- If everything succeeded, state that the plan completed successfully and summarize the key outputs.
 
-		Now produce the final user-facing response using the above context.
+		Now produce the final high quality user-facing response using the above context.
 		`,
 
 		a.Config.AgentName,
 		a.Config.AgentRole,
 		a.SessionID,
 		query,
-		string(actionsJSON),
-		a.Config.DecisionProcess.Description,
 		string(roughPlanJSON),
 		string(execPlansJSON),
 		string(resultsJSON),
-		a.Config.OutputFormats.PlanOutputJSON,
-		a.Config.OutputFormats.ExecutionStepOutputJSON,
+		// a.Config.OutputFormats.PlanOutputJSON,
+		// a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
 	// The user-facing content will be sent as the "user" message; system prompt contains the context.
@@ -580,4 +616,23 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
 	// fmt.Println("storeState ", key, value)
+}
+
+// --- 2) small helper: formatEvent ---
+// Put this method next to other BaseAgent methods.
+func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
+	env := map[string]interface{}{
+		"agent_name": a.Name,
+		"session_id": a.SessionID,
+		"type":       eventType,
+		"payload":    payload,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		// fallback minimal envelope
+		return fmt.Sprintf(`{"agent_name":"%s","session_id":"%s","type":"%s","payload":"unserializable","timestamp":"%s"}`,
+			a.Name, a.SessionID, eventType, time.Now().UTC().Format(time.RFC3339))
+	}
+	return string(b)
 }

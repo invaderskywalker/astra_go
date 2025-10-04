@@ -83,9 +83,9 @@ output_formats:
       "decision_process_output": {
         "overall_thought_process_and_reasoning": "",
         "user_intents": ["sensible string",...],
-        "mind_map_execution_statements": [
+        "mind_map_steps_in_natural_language": [
           "step 1 string in natural language",
-          "step2 string in natural langage",...
+          ,...
         ]
       }
     }
