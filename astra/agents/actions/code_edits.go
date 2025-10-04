@@ -3,23 +3,68 @@ package actions
 
 import (
 	"astra/astra/utils/logging"
+	"astra/astra/utils/math"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
 )
 
-// applyEditsToFile applies a list of code edits to a single file with backup and atomic writes.
-// It supports creating, deleting, replacing, or inserting content in the file.
-//
-// Parameters:
-//   - file: The path to the file to edit.
-//   - edits: A slice of CodeEdit structs specifying the edits to apply.
-//
-// Returns:
-//   - An error if any operation fails, nil otherwise.
+// CodeEdit represents a single code modification operation.
+type CodeEdit struct {
+	Type          string `json:"type"`           // "create_file", "delete_file", "replace", or "insert"
+	File          string `json:"file"`           // Path to file
+	Target        string `json:"target"`         // Target line or block (optional)
+	Start         string `json:"start"`          // Start of block (optional)
+	End           string `json:"end"`            // End of block (optional)
+	Replacement   string `json:"replacement"`    // Replacement text
+	Content       string `json:"content"`        // Insert/create content
+	Position      string `json:"position"`       // "before" or "after" (default "after")
+	ContextBefore string `json:"context_before"` // Context before target (optional)
+	ContextAfter  string `json:"context_after"`  // Context after target (optional)
+}
+
+// ApplyCodeEditsParams defines parameters for the applyCodeEdits function.
+type ApplyCodeEditsParams struct {
+	Edits []CodeEdit `json:"edits"` // List of code edits
+}
+
+// ApplyCodeEditsResult defines the result of the applyCodeEdits function.
+type ApplyCodeEditsResult struct {
+	Success      bool   `json:"success,omitempty"`
+	EditsApplied int    `json:"edits_applied,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// applyCodeEdits applies edits and validates syntax.
+func (a *DataActions) applyCodeEdits(params ApplyCodeEditsParams) ApplyCodeEditsResult {
+	edits := params.Edits
+	if len(edits) == 0 {
+		return ApplyCodeEditsResult{Error: "edits list must not be empty"}
+	}
+
+	editsByFile := make(map[string][]CodeEdit)
+	for _, edit := range edits {
+		editsByFile[edit.File] = append(editsByFile[edit.File], edit)
+	}
+
+	for file, fileEdits := range editsByFile {
+		if err := a.applyEditsToFile(file, fileEdits); err != nil {
+			return ApplyCodeEditsResult{Error: err.Error()}
+		}
+	}
+
+	if err := exec.Command("go", "vet", "./...").Run(); err != nil {
+		a.rollbackFiles(editsByFile)
+		return ApplyCodeEditsResult{Error: "Syntax error: " + err.Error()}
+	}
+
+	return ApplyCodeEditsResult{Success: true, EditsApplied: len(edits)}
+}
+
 func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	if os.Getenv("ASTRA_TEST") == "1" {
 		return nil
@@ -68,15 +113,6 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	return os.Rename(tmpFile, file)
 }
 
-// handleReplace replaces a target line or block in the file content with new content.
-// It uses context and start/end markers to locate the replacement target.
-//
-// Parameters:
-//   - lines: The file content as a slice of lines.
-//   - edit: A CodeEdit struct specifying the replacement details.
-//
-// Returns:
-//   - The updated slice of lines after applying the replacement.
 func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 	replacementLines := strings.Split(edit.Replacement, "\n")
 	contextBefore := edit.ContextBefore
@@ -105,15 +141,6 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 	}
 }
 
-// handleInsert inserts new content before or after a target line in the file content.
-// It uses context and position to determine where to insert the content.
-//
-// Parameters:
-//   - lines: The file content as a slice of lines.
-//   - edit: A CodeEdit struct specifying the insertion details.
-//
-// Returns:
-//   - The updated slice of lines after applying the insertion.
 func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 	contentLines := strings.Split(edit.Content, "\n")
 	position := edit.Position
@@ -138,22 +165,11 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 	return append(lines[:insertIdx], append(contentLines, lines[insertIdx:]...)...)
 }
 
-// findLineIndex locates the index of a target line in the file content, considering context.
-// It searches within a window of lines to match the context before or after the target.
-//
-// Parameters:
-//   - lines: The file content as a slice of lines.
-//   - target: The target string to search for in the lines.
-//   - context: The context string to match before or after the target.
-//   - checkBefore: If true, check context before the target; otherwise, check after.
-//
-// Returns:
-//   - The index of the matching line, or -1 if not found.
 func (a *DataActions) findLineIndex(lines []string, target, context string, checkBefore bool) int {
 	window := 5
 	for i, line := range lines {
 		if strings.Contains(line, target) {
-			if context == "" || (checkBefore && a.hasContextInRange(lines, max(0, i-window), window, context)) ||
+			if context == "" || (checkBefore && a.hasContextInRange(lines, math.Max(0, i-window), window, context)) ||
 				(!checkBefore && a.hasContextInRange(lines, i+1, window, context)) {
 				return i
 			}
@@ -162,19 +178,8 @@ func (a *DataActions) findLineIndex(lines []string, target, context string, chec
 	return -1
 }
 
-// hasContextInRange checks if a context string exists within a range of lines.
-// It searches within a specified window of lines starting from a given index.
-//
-// Parameters:
-//   - lines: The file content as a slice of lines.
-//   - start: The starting index for the search.
-//   - window: The number of lines to search within.
-//   - context: The context string to search for.
-//
-// Returns:
-//   - True if the context is found within the range, false otherwise.
 func (a *DataActions) hasContextInRange(lines []string, start, window int, context string) bool {
-	for i := start; i < min(len(lines), start+window); i++ {
+	for i := start; i < math.Min(len(lines), start+window); i++ {
 		if strings.Contains(lines[i], context) {
 			return true
 		}
@@ -182,23 +187,12 @@ func (a *DataActions) hasContextInRange(lines []string, start, window int, conte
 	return false
 }
 
-// createFile creates a new file with the specified content, creating directories as needed.
-// It logs the creation event for tracking.
-//
-// Parameters:
-//   - file: The path to the file to create.
-//   - content: The content to write to the file.
 func (a *DataActions) createFile(file, content string) {
 	os.MkdirAll(filepath.Dir(file), 0755)
 	os.WriteFile(file, []byte(content), 0644)
 	logging.AppLogger.Info("Created file", zap.String("file", file))
 }
 
-// rollbackFiles restores backup files for all edited files in case of failure.
-// It moves .bak files back to their original names.
-//
-// Parameters:
-//   - editsByFile: A map of file paths to their corresponding CodeEdit slices.
 func (a *DataActions) rollbackFiles(editsByFile map[string][]CodeEdit) {
 	for file := range editsByFile {
 		backup := file + ".bak"
@@ -206,34 +200,4 @@ func (a *DataActions) rollbackFiles(editsByFile map[string][]CodeEdit) {
 			os.Rename(backup, file)
 		}
 	}
-}
-
-// max returns the maximum of two integers.
-//
-// Parameters:
-//   - a: The first integer.
-//   - b: The second integer.
-//
-// Returns:
-//   - The larger of the two integers.
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// min returns the minimum of two integers.
-//
-// Parameters:
-//   - a: The first integer.
-//   - b: The second integer.
-//
-// Returns:
-//   - The smaller of the two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

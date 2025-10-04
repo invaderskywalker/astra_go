@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"go.uber.org/zap"
 )
 
 type OllamaClient struct {
@@ -44,40 +46,59 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 	return resp.Message.Content, nil
 }
 
-func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, <-chan error) {
+// Replace the existing RunStream with this version.
+
+func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, error) {
 	fmt.Println("llm_service_run_stream")
 	defer logging.LogDuration(ctx, "llm_service_run_stream")()
-	ch := make(chan string)
-	errCh := make(chan error, 1)
 
 	body, err := httputils.PostStream(c.baseURL+"/chat", req)
 	if err != nil {
-		errCh <- err
-		close(ch)
-		close(errCh)
-		return ch, errCh
+		return nil, err
 	}
 
+	ch := make(chan string)
+
 	go func() {
-		defer close(ch)
-		defer close(errCh)
-		defer body.Close()
+		defer func() {
+			close(ch)
+			body.Close()
+		}()
 
 		decoder := json.NewDecoder(body)
+
 		for {
+			// If caller cancelled context, stop reading.
+			select {
+			case <-ctx.Done():
+				logging.AppLogger.Info("llm RunStream context cancelled")
+				return
+			default:
+				// continue
+			}
+
 			var chunk ChatResponse
-			if err := decoder.Decode(&chunk); err == io.EOF {
-				break
-			} else if err != nil {
-				errCh <- err
+			if err := decoder.Decode(&chunk); err != nil {
+				if err == io.EOF {
+					// normal EOF -> finish cleanly
+					return
+				}
+				// unexpected decode error: log and exit
+				logging.ErrorLogger.Error("llm stream decode error", zap.Any("err", err))
 				return
 			}
+			// If server signals done, finish.
 			if chunk.Done {
-				break
+				return
 			}
-			ch <- chunk.Message.Content
+			// send content (may be empty) — non-blocking send to avoid goroutine leak
+			select {
+			case ch <- chunk.Message.Content:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
-	return ch, errCh
+	return ch, nil
 }

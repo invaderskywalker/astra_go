@@ -62,49 +62,32 @@ decision_process:
         - next_prompts: array
 
 available_actions:
-  - fetch_repo_context
-  - simulate_code_execution
+  - fetch_file_structure_in_this_repo
+  - explore_files_in_this_repo
   - apply_code_edits
-  - backup_files
-  - rollback_changes
-  - replicate_db_for_branch
-  - update_db_connection
-  - switch_git_branch
-  - create_new_repo
-  - run_tests
-  - store_user_context
-  - log_execution_step
   - scrape_urls
   - query_web
+
+user_intents:
+  - general: "Select this when user is asking normal questions, then your job is to respond accordingly"
+  - user_wants_to_perform_action_in_codebase: "Select this when user wants to make something, he did not say this explicitly, but for which there needs to be edits in this repo"
+  - user_wants_to_analyse_info_from_web: "Select this when user wants to fetch data from web or analyse data from web"
+    
+
+  
 
 output_formats:
   plan_output_json: |
     ```json
     {
-      "thought_process": "",
-      "commentary": "",
       "decision_process_output": {
-        "structured_intent": {},
-        "assumptions": ["string"],
-        "planning_rationale": "string",
-        "replan_flag": false
-      },
-      "detailed_plan": [
-        {
-          "step_id": "string",
-          "title": "string",
-          "description": "string",
-          "preconditions": ["string"],
-          "action": "string",
-          "action_params": {},
-          "expected_outputs": ["string"],
-          "validation_checks": ["string"],
-          "estimated_risk": "low|medium|high",
-          "requires_confirmation": true,
-          "next_if_success": "step_id or END",
-          "next_if_fail": "step_id or REPLAN or ESCALATE"
-        },...
-      ]
+        "overall_thought_process_and_reasoning": "",
+        "user_intents": ["sensible string",...],
+        "mind_map_execution_statements": [
+          "step 1 string in natural language",
+          "step2 string in natural langage",...
+        ]
+      }
     }
     ```
 
@@ -112,19 +95,10 @@ output_formats:
     ```json
     {
       "step_id": "string",
-      "status": "success|fail|skipped",
-      "timestamp": "ISO8601 string",
+      "title": "string",
+      "description": "string",
       "action": "string",
-      "action_params": {},
-      "changes": ["string"],
-      "artifacts": {},
-      "validation": {
-        "checks_run": ["string"],
-        "results": {}
-      },
-      "logs": "string",
-      "new_context": {},
-      "next_step_decision": "next_if_success|next_if_fail|REPLAN"
+      "action_params": {}
     }
     ```
 
