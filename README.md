@@ -51,3 +51,7 @@ and then
  mc alias set local http://localhost:9000 minioadmin minioadmin
  
 then i can use it in code.. 
+
+
+go install golang.org/x/tools/cmd/godoc@latest
+godoc -http=:8001

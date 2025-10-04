@@ -1,4 +1,4 @@
-// astra/controllers/chat.go (new)
+// astra/controllers/chat.go
 package controllers
 
 import (
