@@ -72,8 +72,11 @@ func (c *AgentsController) AgentWebSocket(ctx context.Context, w *websocket.Conn
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Handle connection closure
-	defer w.Close(websocket.StatusNormalClosure, "connection closed")
+	defer func() {
+		if ctx.Err() != nil {
+			w.Close(websocket.StatusNormalClosure, "context cancelled")
+		}
+	}()
 
 	// Goroutine to send periodic pings
 	go func() {
@@ -99,9 +102,15 @@ func (c *AgentsController) AgentWebSocket(ctx context.Context, w *websocket.Conn
 		default:
 			typ, data, err := w.Read(ctx)
 			if err != nil {
+				if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+					logging.AppLogger.Info("client closed connection")
+					return
+				}
 				logging.ErrorLogger.Error("websocket read error", zap.Error(err))
-				return
+				time.Sleep(1 * time.Second) // give client time to reconnect
+				continue
 			}
+
 			if typ != websocket.MessageText {
 				w.Write(ctx, websocket.MessageText, []byte(`{"error":"unsupported data"}`))
 				continue

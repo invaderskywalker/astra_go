@@ -4,6 +4,7 @@ import (
 	"astra/astra/config"
 	"astra/astra/controllers"
 	"astra/astra/utils/logging"
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -24,9 +25,10 @@ func AgentRoutes(ctrl *controllers.AgentsController, cfg config.Config) chi.Rout
 			http.Error(w, "failed to upgrade websocket", http.StatusInternalServerError)
 			return
 		}
-		// defer conn.Close(websocket.StatusInternalError, "internal error")
 
-		ctx := r.Context()
+		// ✅ Use a persistent context not tied to HTTP request
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
 		// Read first message containing token and initial request
 		typ, data, err := conn.Read(ctx)
@@ -88,16 +90,16 @@ func AgentRoutes(ctrl *controllers.AgentsController, cfg config.Config) chi.Rout
 			AgentName: input.AgentName,
 			Query:     input.Query,
 			SessionID: input.SessionID,
-			UserID:    userID, // Use validated userID
+			UserID:    userID,
 		}
 
-		// Process initial request SYNCHRONOUSLY (sends response immediately)
+		// Initial request
 		if !ctrl.ProcessAgentRequest(ctx, conn, &agentReq, userID) {
 			logging.ErrorLogger.Error("failed to process initial request")
 			return
 		}
 
-		// Now delegate further messages to AgentWebSocket (with validated userID)
+		// ✅ Keep connection open for further messages
 		ctrl.AgentWebSocket(ctx, conn, userID)
 	})
 
