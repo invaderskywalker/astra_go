@@ -1,6 +1,7 @@
 package jsonutils
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -24,4 +25,16 @@ func ExtractJSON(input string) string {
 
 	// Nothing found
 	return ""
+}
+
+// ToJSON serializes a Go value to a JSON string with indentation.
+// Returns an empty string if serialization fails.
+func ToJSON(v interface{}) string {
+	// Use json.MarshalIndent for pretty-printed JSON with 2-space indentation
+	bytes, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		// Return empty string on error, consistent with ExtractJSON's fallback
+		return ""
+	}
+	return strings.TrimSpace(string(bytes))
 }

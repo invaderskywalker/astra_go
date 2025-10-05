@@ -86,7 +86,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	for i, stage := range a.Config.DecisionProcess.Stages {
 		stagesDesc += fmt.Sprintf(
 			"\nStage %d: %s\nPurpose: %s\nBehavior: %s\nOutputs: %v\n",
-			i+1, stage.Name, stage.Purpose, stage.Behavior, stage.Outputs,
+			i+1, stage.Name, stage.Purpose, stage.Behavior, "",
 		)
 	}
 
@@ -184,10 +184,11 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			Please stick to the json output format and include all output in the JSON
 
 			****important*****
-			- Respond ONLY with valid JSON. 
+			- Respond ONLY with valid JSON only stick to this format: %s
 			- Any text outside the JSON is considered an error.
 		`,
 		query,
+		a.Config.OutputFormats.PlanOutputJSON,
 	)
 
 	req := llm.ChatRequest{
@@ -243,6 +244,12 @@ func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]inte
 			Your job is to expand this step into a structured JSON execution plan.  
 			This JSON will be given to an executor to either perform a real action (e.g. code edit, DB query, web scrape) or skip if no action is needed.
 
+			## Full plan - %s
+			## Your previous step expansion: %s
+
+			## Current step to expand
+			"%s"
+
 			## Rules
 			- Always output **only one JSON object**, nothing else.  
 			- Follow the schema exactly.  
@@ -257,17 +264,13 @@ func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]inte
 			## Output Schema
 			%s
 
-			## Full plan - %s
-			## Your previous step expansion: %s
-
-			## Current step to expand
-			"%s"
+			
 		`,
 		actionsJSONStr,
-		a.Config.OutputFormats.ExecutionStepOutputJSON,
 		a.RoughPlan,
 		a.ExecutionPlans,
 		stepText,
+		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
 	user_message := fmt.Sprintf(`
@@ -334,9 +337,12 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			return
 		}
 
+		fmt.Println("stepslice -- ", stepsSlice)
+
 		results := []map[string]interface{}{}
 
 		for i, s := range stepsSlice {
+			fmt.Println("stepslice -- ", i, s)
 			// Expect each step to be a plain string
 			stepText, ok := s.(string)
 			if !ok {
@@ -395,6 +401,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			})
 			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": i + 1}
 			execRes := a.executePlan(planToExec)
+			fmt.Println("exec res -- ", execRes)
 
 			// send the execution result as intermediate event
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
@@ -441,6 +448,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interface{} {
+	fmt.Println("executePlan.  ", plan)
 	results := map[string]interface{}{
 		"action_results": map[string]interface{}{},
 	}
@@ -461,7 +469,7 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interfac
 		}
 
 		// fetch identifiers and fields safely
-		stepID := ""
+		var stepID string = ""
 		if v, ok := step["step_id"].(string); ok {
 			stepID = v
 		} else {
@@ -513,55 +521,26 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interfac
 }
 
 func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query string) llm.ChatRequest {
-	// Prepare serialized pieces (best-effort - fall back to string representation on error)
-	resultsJSON, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		resultsJSON = []byte(fmt.Sprintf(`"__failed_to_serialize_results__": %q`, err.Error()))
-	}
-
-	roughPlanJSON, err := json.MarshalIndent(a.RoughPlan, "", "  ")
-	if err != nil {
-		// if nil or serialization fails, show a short message
-		roughPlanJSON = []byte(fmt.Sprintf(`"__rough_plan_unavailable__": %q`, err.Error()))
-	}
-
-	execPlansJSON, err := json.MarshalIndent(a.ExecutionPlans, "", "  ")
-	if err != nil {
-		execPlansJSON = []byte(fmt.Sprintf(`"__execution_plans_unavailable__": %q`, err.Error()))
-	}
-
-	// action summaries (name + description) to keep prompt size bounded
-	// actionSummaries := a.dataActions.ListActionSummaries()
-	// actionsJSON, err := json.MarshalIndent(actionSummaries, "", "  ")
-	// if err != nil {
-	// 	actionsJSON = []byte(fmt.Sprintf(`"__actions_unavailable__": %q`, err.Error()))
-	// }
-
 	// build a human-readable stages description from config
 	var stagesDesc string
 	for i, stage := range a.Config.DecisionProcess.Stages {
 		stagesDesc += fmt.Sprintf("Stage %d: %s\n  Purpose: %s\n  Behavior: %s\n  Outputs: %v\n\n",
-			i+1, stage.Name, stage.Purpose, stage.Behavior, stage.Outputs)
+			i+1, stage.Name, stage.Purpose, stage.Behavior, "")
 	}
 
 	// Final system prompt: explicit, structured, include schemas and content
 	systemPrompt := fmt.Sprintf(`
-		You are %s — %s.
-
-		You will produce a clear, helpful final response to the user's query.  Use the provided execution results and context to generate:
-		1) A concise summary of what was done and why (1-3 short points).
-		2) A list of any important outcomes (section not mandatory).
-		3) Any actions that failed or need human attention (with short remediation steps).
-		4) Next recommended steps (if any) and any required clarifications.
-
-		Important: your reply should be primarily plain text suitable for a user. You may include a short JSON block (optional) listing final structured outputs if helpful, but it is not required. Prefer clarity and actionable language.
-
-		--- Context and artifacts (for your reference) ---
-
+		You are 
 		Agent identity:
 		Agent Name: %s
 		Agent Role: %s
-		Session ID: %s
+
+		You will produce a clear, helpful final response to the user's query.  
+		Use the provided execution results and context to generate:
+		1) A concise summary of what was done and why (1-3 short points).
+		2) Respond to user query.
+
+		--- Context and artifacts (for your reference) ---
 
 		User Query:
 		%s
@@ -592,17 +571,14 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 
 		a.Config.AgentName,
 		a.Config.AgentRole,
-		a.SessionID,
 		query,
-		string(roughPlanJSON),
-		string(execPlansJSON),
-		string(resultsJSON),
-		// a.Config.OutputFormats.PlanOutputJSON,
-		// a.Config.OutputFormats.ExecutionStepOutputJSON,
+		jsonutils.ToJSON(a.RoughPlan),
+		jsonutils.ToJSON(a.ExecutionPlans),
+		jsonutils.ToJSON(results),
 	)
 
 	// The user-facing content will be sent as the "user" message; system prompt contains the context.
-	userMessage := fmt.Sprintf("Please generate the final reply to the user for query: %s", query)
+	userMessage := fmt.Sprintf("Please generate the final reply to the user for query: %s Output Format RICH TEXT properly structured", query)
 
 	return llm.ChatRequest{
 		Model: DefaultModel,

@@ -41,25 +41,25 @@ func NewDataActions(db *gorm.DB) *DataActions {
 		Name:        "apply_code_edits",
 		Description: "Applies a list of code edits (replace, insert, create, delete) to source files. Only to be triggered when code edit is required",
 		Params:      ApplyCodeEditsParams{},
-		Returns:     ApplyCodeEditsResult{},
+		// Returns:     ApplyCodeEditsResult{},
 		Examples: []string{
 			`{
 				"edits": [
 					{
-					"type": "replace",
-					"target": "return None",
-					"context_before": "def bar(",
-					"replacement": "return 'ok'"
+						"type": "replace",
+						"target": "return None",
+						"context_before": "def bar(",
+						"replacement": "return 'ok'"
 					}
 				]
 			}`,
 			`{
 				"edits": [
 					{
-					"type": "insert",
-					"target": "class UserController:",
-					"position": "after",
-					"content": "    def deactivate_user(self, user_id: int):\n        pass\n"
+						"type": "insert",
+						"target": "class UserController:",
+						"position": "after",
+						"content": "    def deactivate_user(self, user_id: int):\n        pass\n"
 					}
 				]
 			}`,
@@ -71,7 +71,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 		Name:        "fetch_file_structure_in_this_repo",
 		Description: "Fetches the file and folder structure of the current repository using the system `tree` command.",
 		Params:      FetchFileStructureParams{},
-		Returns:     FetchFileStructureResult{},
+		// Returns:     FetchFileStructureResult{},
 		Examples: []string{
 			`{
 				"path": ".",
@@ -79,6 +79,22 @@ func NewDataActions(db *gorm.DB) *DataActions {
 			}`,
 		},
 		Fn: a.FetchFileStructureInRepo,
+	})
+
+	a.register(ActionSpec{
+		Name:        "ask_follow_up_questions_to_user",
+		Description: "Takes an array of questions and returns a structured list with placeholder answers. Can be extended to use LLM reasoning later.",
+		Params:      AskFollowUpQuestionsParams{},
+		// Returns:     AskFollowUpQuestionsResult{},
+		Examples: []string{
+			`{
+				"questions": [
+					"Q1",
+					"Q2",
+				]
+			}`,
+		},
+		Fn: a.AskFollowUpQuestions,
 	})
 
 	return a

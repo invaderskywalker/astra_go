@@ -17,10 +17,10 @@ type DecisionProcessConfig struct {
 }
 
 type DecisionStep struct {
-	Name     string                   `yaml:"name"`
-	Purpose  string                   `yaml:"purpose"`
-	Behavior string                   `yaml:"behavior"`
-	Outputs  []map[string]interface{} `yaml:"outputs"`
+	Name     string `yaml:"name"`
+	Purpose  string `yaml:"purpose"`
+	Behavior string `yaml:"behavior"`
+	// Outputs  []map[string]interface{} `yaml:"outputs"`
 }
 
 // OutputFormats holds JSON schema templates

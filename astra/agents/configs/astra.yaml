@@ -24,11 +24,7 @@ decision_process:
         - Scan environment (repo, DB, file structures, existing utilities, web sources).
         - Identify dependencies and potential conflicts.
         - Formulate detailed, conditional plan steps with preconditions, actions, expected outputs, and next-step logic.
-      outputs:
-        - detailed_plan: array of step objects
-        - structured_intent: object
-        - assumptions: array
-        - planning_rationale: string
+
 
     - name: "Stepwise Execution"
       purpose: "Execute the generated plan sequentially, using previous results as context."
@@ -37,9 +33,7 @@ decision_process:
         - Validate each step (syntax, tests, schema, runtime checks).
         - Pass outputs forward as new context.
         - Trigger re-planning only when errors or new dependencies emerge.
-      outputs:
-        - execution_log: array of step execution results
-        - replan_flag: boolean
+
 
     - name: "Reflection and Adaptation"
       purpose: "Evaluate outcomes against expectations and adapt plan if needed."
@@ -47,9 +41,6 @@ decision_process:
         - Compare actual vs expected outputs for each step.
         - Adjust remaining plan if assumptions break.
         - Suggest rollback or user intervention if critical errors occur.
-      outputs:
-        - updated_plan: array of step objects
-        - issues_detected: array
 
     - name: "Finalization and Summary"
       purpose: "Summarize reasoning, results, and next user prompts."
@@ -57,9 +48,7 @@ decision_process:
         - Consolidate logs, code edits, DB changes, scrape results, and test outcomes.
         - Produce structured final report with next steps.
         - Optionally commit, notify, or store reasoning for future use.
-      outputs:
-        - final_summary: object
-        - next_prompts: array
+
 
 available_actions:
   - fetch_file_structure_in_this_repo
@@ -86,6 +75,10 @@ output_formats:
         "mind_map_steps_in_natural_language": [
           "step 1 string in natural language",
           ,...
+        ],
+        "actionable_steps_in_mind_map_steps_in_natural_language": [
+          "actonable step 1 string in natural language",
+          ,...
         ]
       }
     }
@@ -95,10 +88,10 @@ output_formats:
     ```json
     {
       "step_id": "string",
-      "title": "string",
-      "description": "string",
+      "thought_process_for_this_step": "string",
       "action": "string",
-      "action_params": {}
+      "action_params": {},
+      "are_all_steps_detailed_plan_created": false
     }
     ```
 
