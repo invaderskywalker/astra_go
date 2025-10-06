@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	DefaultModel     = "llama3:8b"
+	// DefaultModel     = "llama3:8b"
+	DefaultModel     = "gpt-4.1"
 	DefaultMaxTokens = 10000
 	DefaultTemp      = 0.1
 )
@@ -26,7 +27,7 @@ type BaseAgent struct {
 	Name           string
 	TenantID       int
 	UserID         int
-	LLM            *llm.OllamaClient
+	LLM            *llm.GPTClient
 	Config         *configs.AgentConfig
 	ExecutionPlans []map[string]interface{}
 	RoughPlan      map[string]interface{}
@@ -45,7 +46,7 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 		Name:        agentName,
 		TenantID:    userID,
 		UserID:      userID,
-		LLM:         llm.NewOllamaClient(),
+		LLM:         llm.NewGPTClient(),
 		Config:      cfg,
 		SessionID:   sessionID,
 		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
@@ -82,24 +83,16 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	}()
 
 	// Build a structured description of the decision process stages
-	var stagesDesc string
-	for i, stage := range a.Config.DecisionProcess.Stages {
-		stagesDesc += fmt.Sprintf(
-			"\nStage %d: %s\nPurpose: %s\nBehavior: %s\nOutputs: %v\n",
-			i+1, stage.Name, stage.Purpose, stage.Behavior, "",
-		)
-	}
+	var stagesDesc string = ""
+	// for i, stage := range a.Config.DecisionProcess.Stages {
+	// 	stagesDesc += fmt.Sprintf(
+	// 		"\nStage %d: %s\nPurpose: %s\nBehavior: %s\nOutputs: %v\n",
+	// 		i+1, stage.Name, stage.Purpose, stage.Behavior, "",
+	// 	)
+	// }
 
 	// Get lightweight action summaries (name + description) from runtime registry
 	actionSummaries := a.dataActions.ListActionSummaries()
-	actionsJSON, err := json.MarshalIndent(actionSummaries, "", "  ")
-	actionsJSONStr := ""
-	if err != nil {
-		// Fallback to a simple fmt representation if marshal fails
-		actionsJSONStr = fmt.Sprintf("%v", actionSummaries)
-	} else {
-		actionsJSONStr = string(actionsJSON)
-	}
 
 	// Build the system prompt (inject action summaries)
 	systemPrompt := fmt.Sprintf(`
@@ -153,11 +146,13 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			- Ensure actions and parameters align with the user's query and decision process.
 			- Stick to the structured outputs specified in the decision process.
 
-		## A rough example of mind_map_steps_in_natural_language to ensure your output format is correct.
+		## A rough example of mind_map_steps_in_natural_language  
+		to ensure your output format is correct.
 			"mind_map_steps_in_natural_language": [
 				"plain english statement 1",
 				"plain english next step",...
 			]
+
 
 		---
 
@@ -166,7 +161,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		`,
 		a.Config.AgentName,
 		a.Config.AgentRole,
-		actionsJSONStr,
+		jsonutils.ToJSON(actionSummaries),
 		a.Config.DecisionProcess.Description,
 		stagesDesc,
 		a.Config.OutputFormats.PlanOutputJSON,
@@ -190,6 +185,8 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		query,
 		a.Config.OutputFormats.PlanOutputJSON,
 	)
+
+	print("debug --- prompt.. ", systemPrompt, user_message)
 
 	req := llm.ChatRequest{
 		Model: DefaultModel,
@@ -216,7 +213,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	return plan
 }
 
-func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]interface{}) {
+func (a *BaseAgent) expandStep(stepText string, index int, results any) (plan map[string]interface{}) {
 	// Default error return if something goes wrong
 	defer func() {
 		if r := recover(); r != nil {
@@ -246,6 +243,7 @@ func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]inte
 
 			## Full plan - %s
 			## Your previous step expansion: %s
+			## All results of previous steps: %s
 
 			## Current step to expand
 			"%s"
@@ -269,6 +267,7 @@ func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]inte
 		actionsJSONStr,
 		a.RoughPlan,
 		a.ExecutionPlans,
+		results,
 		stepText,
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
@@ -277,11 +276,13 @@ func (a *BaseAgent) expandStep(stepText string, index int) (plan map[string]inte
 		Please analyze and create a good thoughtful execution plan for the following execution step:
 			Step to focus on %s
 			Please stick to the json output format and include all output in the JSON
+
 			****important*****
-			- Respond ONLY with valid JSON. 
+			- Respond ONLY with valid JSON only stick to this format: %s
 			- Any text outside the JSON is considered an error.
 		`,
 		stepText,
+		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
 	req := llm.ChatRequest{
@@ -324,22 +325,41 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		ch <- a.formatEvent("intermediate", map[string]interface{}{"message": "Plan created"})
 
 		// Safely extract the steps list from the rough plan
+		// var stepsSlice []interface{}
+		// if dp, ok := roughPlan["decision_process_output"].(map[string]interface{}); ok {
+		// 	if rawSteps, ok := dp["mind_map_steps_in_natural_language"]; ok {
+		// 		if castSteps, ok := rawSteps.([]interface{}); ok {
+		// 			stepsSlice = castSteps
+		// 		}
+		// 	}
+		// }
 		var stepsSlice []interface{}
+
 		if dp, ok := roughPlan["decision_process_output"].(map[string]interface{}); ok {
-			if rawSteps, ok := dp["mind_map_steps_in_natural_language"]; ok {
-				if castSteps, ok := rawSteps.([]interface{}); ok {
-					stepsSlice = castSteps
+			if rawThoughts, ok := dp["actionable_thoughts"]; ok {
+				if castThoughts, ok := rawThoughts.([]interface{}); ok {
+					for _, item := range castThoughts {
+						if thoughtMap, ok := item.(map[string]interface{}); ok {
+							if statement, ok := thoughtMap["mind_map_statement"]; ok {
+								if should, ok1 := thoughtMap["should_take_action_for_this"]; ok1 && should.(bool) {
+									stepsSlice = append(stepsSlice, statement)
+								}
+
+							}
+						}
+					}
 				}
 			}
 		}
+
 		if stepsSlice == nil {
 			ch <- a.formatEvent("error", map[string]interface{}{"message": "no steps found in rough plan"})
 			return
 		}
 
-		fmt.Println("stepslice -- ", stepsSlice)
-
 		results := []map[string]interface{}{}
+
+		fmt.Println("stepsSlices -- ", stepsSlice)
 
 		for i, s := range stepsSlice {
 			fmt.Println("stepslice -- ", i, s)
@@ -362,7 +382,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			})
 
 			a.stepCh <- map[string]interface{}{"message": "Expanding step", "step_index": i + 1, "step": stepText}
-			expanded := a.expandStep(stepText, i+1)
+			expanded := a.expandStep(stepText, i+1, results)
 			if expanded == nil {
 				// safety: report and continue
 				results = append(results, map[string]interface{}{
@@ -448,7 +468,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interface{} {
-	fmt.Println("executePlan.  ", plan)
+	// fmt.Println("executePlan.  ", plan)
 	results := map[string]interface{}{
 		"action_results": map[string]interface{}{},
 	}

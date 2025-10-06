@@ -3,7 +3,9 @@ package actions
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -50,4 +52,61 @@ func (a *DataActions) FetchFileStructureInRepo(params FetchFileStructureParams) 
 	}
 
 	return FetchFileStructureResult{Structure: out.String()}
+}
+
+// ReadFileParams defines parameters for reading a specific file in the repo.
+type ReadFileParams struct {
+	Path string `json:"path"` // Full or relative path to the file
+}
+
+// ReadFileResult defines the output containing the file’s contents.
+type ReadFileResult struct {
+	Path    string `json:"path"`              // Path of the file read
+	Content string `json:"content,omitempty"` // File content (if read successfully)
+	Error   string `json:"error,omitempty"`   // Error message, if any
+}
+
+// ReadFileInRepo reads the contents of a file within the repository.
+func (a *DataActions) ReadFileInRepo(params ReadFileParams) ReadFileResult {
+	if params.Path == "" {
+		return ReadFileResult{Error: "file path is required"}
+	}
+
+	// Resolve absolute path
+	absPath, err := filepath.Abs(params.Path)
+	if err != nil {
+		return ReadFileResult{Error: fmt.Sprintf("failed to resolve path: %v", err)}
+	}
+
+	// Ensure it's within repo root
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return ReadFileResult{Error: fmt.Sprintf("failed to get working directory: %v", err)}
+	}
+
+	if !strings.HasPrefix(absPath, repoRoot) {
+		return ReadFileResult{Error: "access denied: file outside repository root"}
+	}
+
+	// Read file using modern API
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return ReadFileResult{
+			Path:  absPath,
+			Error: fmt.Sprintf("failed to read file: %v", err),
+		}
+	}
+
+	// Safety: limit file size
+	if len(data) > 2*1024*1024 { // 2MB
+		return ReadFileResult{
+			Path:  absPath,
+			Error: "file too large to display (>2MB)",
+		}
+	}
+
+	return ReadFileResult{
+		Path:    absPath,
+		Content: string(data),
+	}
 }
