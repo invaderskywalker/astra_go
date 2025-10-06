@@ -84,13 +84,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 
 	// Build a structured description of the decision process stages
 	var stagesDesc string = ""
-	// for i, stage := range a.Config.DecisionProcess.Stages {
-	// 	stagesDesc += fmt.Sprintf(
-	// 		"\nStage %d: %s\nPurpose: %s\nBehavior: %s\nOutputs: %v\n",
-	// 		i+1, stage.Name, stage.Purpose, stage.Behavior, "",
-	// 	)
-	// }
-
 	// Get lightweight action summaries (name + description) from runtime registry
 	actionSummaries := a.dataActions.ListActionSummaries()
 
@@ -186,7 +179,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		a.Config.OutputFormats.PlanOutputJSON,
 	)
 
-	print("debug --- prompt.. ", systemPrompt, user_message)
+	// print("debug --createRoughPlan- prompt.. ", systemPrompt, user_message)
 
 	req := llm.ChatRequest{
 		Model: DefaultModel,
@@ -213,75 +206,66 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	return plan
 }
 
-func (a *BaseAgent) expandStep(stepText string, index int, results any) (plan map[string]interface{}) {
+func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
 	// Default error return if something goes wrong
 	defer func() {
 		if r := recover(); r != nil {
-			logging.ErrorLogger.Error("ExpandStep failure", zap.Any("recover", r))
+			logging.ErrorLogger.Error("generateNextExecutionPlan failure", zap.Any("recover", r))
 			plan = map[string]interface{}{"error": fmt.Sprint(r)}
 		}
 	}()
 
 	// Get full action specs (params, returns, examples) from runtime registry
 	fullActions := a.dataActions.ListActions()
-	actionsJSON, err := json.MarshalIndent(fullActions, "", "  ")
-	actionsJSONStr := ""
-	if err != nil {
-		actionsJSONStr = fmt.Sprintf("%v", fullActions)
-	} else {
-		actionsJSONStr = string(actionsJSON)
-	}
+	actionsJSON, _ := json.MarshalIndent(fullActions, "", "  ")
+	actionsJSONStr := string(actionsJSON)
 
-	// Build the system prompt (inject full action specs)
-	systemPrompt := fmt.Sprintf(`
-		You are Astra’s Execution Planner.
+	var systemPrompt string
+	var userPrompt string
 
-			## Context
-			You receive one natural-language step from a rough execution template.  
-			Your job is to expand this step into a structured JSON execution plan.  
-			This JSON will be given to an executor to either perform a real action (e.g. code edit, DB query, web scrape) or skip if no action is needed.
+	systemPrompt = fmt.Sprintf(`
+		You are Astra’s  sequential execution Planner.
 
-			## Full plan - %s
-			## Your previous step expansion: %s
-			## All results of previous steps: %s
+		Context:
+		- Full mind map plan: %s
+		- Previous execution results: %s
+		- Available actions (full spec): %s
 
-			## Current step to expand
-			"%s"
+		Task:
+		You are provided with a full mind map of responding 
+		to user query.
+		And you are provided with all actions that you can take and 
+		all previous execution determined by you and their results.
 
-			## Rules
-			- Always output **only one JSON object**, nothing else.  
-			- Follow the schema exactly.  
-			- If the step requires no concrete execution, set action and action params as empty. 
-			- Otherwise, choose the correct action from the available list and specify precise action_params.  
-			- Provide expected outputs and validation checks to help downstream validation.  
-			- Do not include meta or planning notes.
+		Think properly and present only the next single 
+		concrete execution plan (single JSON object).
 
-			## Available Actions (full spec: params, returns, examples)
+		
+
+		Rules:
+		- Output exactly one JSON object and nothing else.
+		- If no concrete action is required, set "action" to an empty string and return the schema.
+
+		## Output Schema (stick to this)
 			%s
-
-			## Output Schema
-			%s
-
-			
 		`,
+		jsonutils.ToJSON(roughPlan),
+		jsonutils.ToJSON(results),
 		actionsJSONStr,
-		a.RoughPlan,
-		a.ExecutionPlans,
-		results,
-		stepText,
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
-	user_message := fmt.Sprintf(`
-		Please analyze and create a good thoughtful execution plan for the following execution step:
-			Step to focus on %s
-			Please stick to the json output format and include all output in the JSON
+	// fmt.Println("debug generateNextExecutionPlan prompt ", systemPrompt)
 
-			****important*****
-			- Respond ONLY with valid JSON only stick to this format: %s
-			- Any text outside the JSON is considered an error.
+	userPrompt = fmt.Sprintf(`
+		Please analyze and create a good thoughtful 
+		execution plan and output a single object
+		Please stick to the json output format and include all output in the JSON
+
+		****important*****
+		- Respond ONLY with valid JSON only stick to this format: %s
+		- Any text outside the JSON is considered an error.
 		`,
-		stepText,
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
@@ -289,19 +273,24 @@ func (a *BaseAgent) expandStep(stepText string, index int, results any) (plan ma
 		Model: DefaultModel,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: user_message},
+			{Role: "user", Content: userPrompt},
 		},
 		Stream: false,
 	}
+
 	resp, err := a.LLM.Run(context.Background(), req)
 	if err != nil {
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
-	print("expandStep Resp ...", resp)
+
+	fmt.Println("\n exec done --- ", resp)
+
 	respJSON := jsonutils.ExtractJSON(resp)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
+
+	// persist for traceability
 	a.storeState("execution_step_expand", plan)
 	a.ExecutionPlans = append(a.ExecutionPlans, plan)
 	return plan
@@ -309,232 +298,226 @@ func (a *BaseAgent) expandStep(stepText string, index int, results any) (plan ma
 
 func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 	ch := make(chan string)
+
 	go func() {
 		defer close(ch)
 
-		// keep internal log update as before
+		// Step 1: Create the rough plan
 		a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
 		roughPlan := a.createRoughPlan(query)
 		if roughPlan["error"] != nil {
-			// send structured error event to client
-			ch <- a.formatEvent("error", map[string]interface{}{"message": fmt.Sprint(roughPlan["error"])})
+			ch <- a.formatEvent("error", map[string]interface{}{
+				"message": fmt.Sprint(roughPlan["error"]),
+			})
 			return
 		}
+		a.RoughPlan = roughPlan
+		ch <- a.formatEvent("intermediate", map[string]interface{}{
+			"message": "Plan created successfully",
+		})
 
-		// send a small intermediate event saying plan created (client can show progress)
-		ch <- a.formatEvent("intermediate", map[string]interface{}{"message": "Plan created"})
-
-		// Safely extract the steps list from the rough plan
-		// var stepsSlice []interface{}
-		// if dp, ok := roughPlan["decision_process_output"].(map[string]interface{}); ok {
-		// 	if rawSteps, ok := dp["mind_map_steps_in_natural_language"]; ok {
-		// 		if castSteps, ok := rawSteps.([]interface{}); ok {
-		// 			stepsSlice = castSteps
-		// 		}
-		// 	}
-		// }
-		var stepsSlice []interface{}
-
-		if dp, ok := roughPlan["decision_process_output"].(map[string]interface{}); ok {
-			if rawThoughts, ok := dp["actionable_thoughts"]; ok {
-				if castThoughts, ok := rawThoughts.([]interface{}); ok {
-					for _, item := range castThoughts {
-						if thoughtMap, ok := item.(map[string]interface{}); ok {
-							if statement, ok := thoughtMap["mind_map_statement"]; ok {
-								if should, ok1 := thoughtMap["should_take_action_for_this"]; ok1 && should.(bool) {
-									stepsSlice = append(stepsSlice, statement)
-								}
-
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if stepsSlice == nil {
-			ch <- a.formatEvent("error", map[string]interface{}{"message": "no steps found in rough plan"})
-			return
-		}
+		ch <- a.formatEvent("intermediate", map[string]interface{}{
+			"message": jsonutils.ToJSON(roughPlan),
+		})
 
 		results := []map[string]interface{}{}
+		stepIndex := 1
 
-		fmt.Println("stepsSlices -- ", stepsSlice)
+		// Step 3: Begin iterative execution loop
+		for {
 
-		for i, s := range stepsSlice {
-			fmt.Println("stepslice -- ", i, s)
-			// Expect each step to be a plain string
-			stepText, ok := s.(string)
-			if !ok {
-				a.stepCh <- map[string]interface{}{"message": "Skipping invalid step format", "index": i}
-				// send intermediate notice to client
-				ch <- a.formatEvent("intermediate", map[string]interface{}{
-					"message": "skipping invalid step format", "index": i,
-				})
-				continue
-			}
+			a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
 
-			// send intermediate event: step expansion starting
-			ch <- a.formatEvent("intermediate", map[string]interface{}{
-				"phase":      "expanding_step",
-				"step_index": i + 1,
-				"step_text":  stepText,
-			})
-
-			a.stepCh <- map[string]interface{}{"message": "Expanding step", "step_index": i + 1, "step": stepText}
-			expanded := a.expandStep(stepText, i+1, results)
+			// Generate plan for current step
+			expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
 			if expanded == nil {
-				// safety: report and continue
-				results = append(results, map[string]interface{}{
-					"step_index": i + 1, "status": "error", "error": "expandStep returned nil",
+				ch <- a.formatEvent("error", map[string]interface{}{
+					"message": "generateNextExecutionPlan returned nil",
 				})
-				ch <- a.formatEvent("intermediate", map[string]interface{}{
-					"phase": "expand_error", "index": i + 1, "error": "expandStep returned nil",
-				})
-				continue
+				return
 			}
 			if errVal, ok := expanded["error"]; ok && errVal != nil {
-				// expansion error: send structured error event and abort further processing
-				errStr := fmt.Sprint(errVal)
-				ch <- a.formatEvent("error", map[string]interface{}{"message": errStr})
+				ch <- a.formatEvent("error", map[string]interface{}{
+					"message": fmt.Sprint(errVal),
+				})
 				return
 			}
 
-			// send expanded step to client (intermediate)
+			shouldContinue := false
+			if sc, ok := expanded["should_continue"].(bool); ok {
+				shouldContinue = sc
+			}
+			if !shouldContinue {
+				break
+			}
+
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":    "expanded_step",
-				"index":    i + 1,
+				"index":    stepIndex,
 				"expanded": expanded,
 			})
 
-			// Determine if expanded is a full plan or a single-step object.
-			var planToExec map[string]interface{}
-			if _, hasDetailed := expanded["detailed_plan"]; hasDetailed {
-				planToExec = expanded
-			} else {
-				planToExec = map[string]interface{}{"detailed_plan": []interface{}{expanded}}
-			}
+			// Step 4: Execute the plan
+			var planToExec map[string]interface{} = expanded
+			// if _, hasDetailed := expanded["detailed_plan"]; hasDetailed {
+			// 	planToExec = expanded
+			// } else {
+			// 	planToExec = map[string]interface{}{"detailed_plan": []interface{}{expanded}}
+			// }
 
-			// inform client that execution is starting for this step
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
-				"phase": "executing_step", "index": i + 1,
+				"phase": "executing_step", "index": stepIndex,
 			})
-			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": i + 1}
-			execRes := a.executePlan(planToExec)
-			fmt.Println("exec res -- ", execRes)
+			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
 
-			// send the execution result as intermediate event
+			execRes := a.executePlan(planToExec)
+			fmt.Println("result of execution ", execRes)
+
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":   "executed_step",
-				"index":   i + 1,
+				"index":   stepIndex,
 				"execRes": execRes,
 			})
 
-			// append result and continue
 			results = append(results, map[string]interface{}{
-				"step_index": i + 1,
-				"step_text":  stepText,
-				"result":     execRes,
+				"step_index": stepIndex,
+				// "step_text":  stepText,
+				"result": execRes,
 			})
 
-			// Optional: if you want to trigger re-plan on certain conditions, examine execRes here
-			// Example (simple): if execRes contains an error, you may choose to stop and replan.
-			// Not implemented: replan loop (keeps flow linear for now).
+			// // Step 5: Reflection — check whether to continue and next_step
+			// reflection := a.generateNextExecutionPlan(a.RoughPlan, 0, results)
+			// if reflection == nil {
+			// 	ch <- a.formatEvent("error", map[string]interface{}{
+			// 		"message": "reflection returned nil",
+			// 	})
+			// 	return
+			// }
+			// if errVal, ok := reflection["error"]; ok && errVal != nil {
+			// 	ch <- a.formatEvent("error", map[string]interface{}{
+			// 		"message": fmt.Sprint(errVal),
+			// 	})
+			// 	return
+			// }
+
+			// // Handle should_continue
+			// shouldContinue := false
+			// if sc, ok := reflection["should_continue"].(bool); ok {
+			// 	shouldContinue = sc
+			// }
+			// if !shouldContinue {
+			// 	break
+			// }
+
+			// // Handle next_step (object)
+			// nextStepObj, ok := reflection["next_step"].(map[string]interface{})
+			// if ok && len(nextStepObj) > 0 {
+			// 	stepSummary := fmt.Sprintf("%v (action: %v)", nextStepObj["step_id"], nextStepObj["action"])
+
+			// 	if dp, ok := a.RoughPlan["decision_process_output"].(map[string]interface{}); ok {
+			// 		if raw, ok := dp["mind_map_steps_in_natural_language"].([]interface{}); ok {
+			// 			dp["mind_map_steps_in_natural_language"] = append(raw, stepSummary)
+			// 		} else {
+			// 			dp["mind_map_steps_in_natural_language"] = []interface{}{stepSummary}
+			// 		}
+			// 	} else {
+			// 		a.RoughPlan["decision_process_output"] = map[string]interface{}{
+			// 			"mind_map_steps_in_natural_language": []interface{}{stepSummary},
+			// 		}
+			// 	}
+
+			// 	// Move to the newly added step
+			// 	stepIndex = len(a.RoughPlan["decision_process_output"].(map[string]interface{})["mind_map_steps_in_natural_language"].([]interface{}))
+			// }
+
+			// // Recalculate mindSteps (because we may have appended)
+			// // if dp, ok := a.RoughPlan["decision_process_output"].(map[string]interface{}); ok {
+			// // 	if raw, ok := dp["mind_map_steps_in_natural_language"].([]interface{}); ok {
+			// // 		mindSteps = raw
+			// // 	}
+			// // }
 		}
 
+		// Step 6: Summarize and generate final LLM response
 		a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
-
-		// Build the response request with full context & results
 		respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
 
-		// Stream final LLM response built from results
 		respCh, err := a.LLM.RunStream(context.Background(), respReq)
 		if err != nil {
 			a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
-			ch <- a.formatEvent("error", map[string]interface{}{"message": "failed to stream response", "error": err.Error()})
+			ch <- a.formatEvent("error", map[string]interface{}{
+				"message": "failed to stream response", "error": err.Error(),
+			})
 			return
 		}
 
-		// wrap each chunk in a response_chunk envelope so clients can distinguish it
 		for chunk := range respCh {
 			a.responseCh <- chunk
 			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
 		}
 
-		// optional: final completion event
-		ch <- a.formatEvent("completed", map[string]interface{}{"message": "Process completed", "steps": len(results)})
+		ch <- a.formatEvent("completed", map[string]interface{}{
+			"message": "Process completed successfully",
+			"steps":   len(results),
+		})
 	}()
+
 	return ch
 }
 
-func (a *BaseAgent) executePlan(plan map[string]interface{}) map[string]interface{} {
-	// fmt.Println("executePlan.  ", plan)
-	results := map[string]interface{}{
+func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string]interface{}) {
+	fmt.Println("executePlan.  ", plan)
+	results = map[string]interface{}{
 		"action_results": map[string]interface{}{},
 	}
 
-	steps, ok := plan["detailed_plan"].([]interface{})
+	step, ok := plan["next_step"].(map[string]interface{})
 	if !ok {
 		return map[string]interface{}{"error": "invalid plan format: missing detailed_plan"}
 	}
 
-	for i, s := range steps {
-		step, ok := s.(map[string]interface{})
-		if !ok {
-			// store parse error
-			results["action_results"].(map[string]interface{})[fmt.Sprintf("step_%d", i)] = map[string]interface{}{
-				"status": "error", "error": "invalid step format",
-			}
-			continue
-		}
+	// fetch identifiers and fields safely
+	var stepID string = ""
+	if v, ok := step["step_id"].(string); ok {
+		stepID = v
+	}
+	actionName, _ := step["action"].(string)
 
-		// fetch identifiers and fields safely
-		var stepID string = ""
-		if v, ok := step["step_id"].(string); ok {
-			stepID = v
-		} else {
-			// fallback to index-based id
-			stepID = fmt.Sprintf("step_%d", i+1)
+	// action_params may be missing or of different type; ensure we pass map[string]interface{}
+	var params map[string]interface{}
+	if p, ok := step["action_params"].(map[string]interface{}); ok {
+		params = p
+	} else {
+		// try marshal/unmarshal to normalize if it's e.g. map[interface{}]interface{} or something else
+		params = map[string]interface{}{}
+		if step["action_params"] != nil {
+			bytes, _ := json.Marshal(step["action_params"])
+			_ = json.Unmarshal(bytes, &params)
 		}
-		actionName, _ := step["action"].(string)
+	}
 
-		// action_params may be missing or of different type; ensure we pass map[string]interface{}
-		var params map[string]interface{}
-		if p, ok := step["action_params"].(map[string]interface{}); ok {
-			params = p
-		} else {
-			// try marshal/unmarshal to normalize if it's e.g. map[interface{}]interface{} or something else
-			params = map[string]interface{}{}
-			if step["action_params"] != nil {
-				bytes, _ := json.Marshal(step["action_params"])
-				_ = json.Unmarshal(bytes, &params)
-			}
-		}
-
-		// If actionName empty → skip (no-op)
-		if actionName == "" {
-			results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
-				"status": "skipped", "note": "no action specified",
-			}
-			continue
-		}
-
-		// Execute the action via dataActions
-		a.stepCh <- map[string]interface{}{"message": "Executing step", "step_id": stepID, "action": actionName}
-		out, err := a.dataActions.ExecuteAction(actionName, params)
-		if err != nil {
-			results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
-				"status": "error",
-				"error":  err.Error(),
-			}
-			// Optionally: trigger replan logic here if needed (not implemented)
-			continue
-		}
-
+	// If actionName empty → skip (no-op)
+	if actionName == "" {
 		results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
-			"status": "ok",
-			"output": out,
+			"status": "skipped", "note": "no action specified",
 		}
+		return
+	}
+
+	// Execute the action via dataActions
+	a.stepCh <- map[string]interface{}{"message": "Executing step", "step_id": stepID, "action": actionName}
+	out, err := a.dataActions.ExecuteAction(actionName, params)
+	if err != nil {
+		results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		}
+		return
+	}
+
+	results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
+		"status": "ok",
+		"output": out,
 	}
 
 	return results

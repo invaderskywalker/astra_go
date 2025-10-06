@@ -71,18 +71,10 @@ output_formats:
     {
       "decision_process_output": {
         "overall_thought_process_and_reasoning": "", // important to write
-        "user_intents": ["sensible string",...],
         "mind_map_steps_in_natural_language": [
           "step 1 string in natural language",
           ,...
         ],
-        "actionable_thoughts": [
-          {
-            "mind_map_statement": "",
-            "should_take_action_for_this": false,
-            "which_function_to_trigger_for_this_step": ""
-          },...
-        ]
       }
     }
     ```
@@ -90,11 +82,13 @@ output_formats:
   execution_step_output_json: |
     ```json
     {
-      "step_id": "string",
-      "thought_process_for_this_step": "string",
-      "action": "string",
-      "action_params": {},
-      "are_all_steps_detailed_plan_created": false
+      "thought_process": "string",
+      "should_continue": true,
+      "next_step": {
+        "step_id": "string",
+        "action": "string",
+        "action_params": {}
+      }
     }
     ```
 

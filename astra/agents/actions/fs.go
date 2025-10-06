@@ -66,6 +66,14 @@ type ReadFileResult struct {
 	Error   string `json:"error,omitempty"`   // Error message, if any
 }
 
+type ReadFilesParams struct {
+	Paths []string `json:"paths"` // List of files to read
+}
+
+type ReadFilesResult struct {
+	Results []ReadFileResult `json:"results"`
+}
+
 // ReadFileInRepo reads the contents of a file within the repository.
 func (a *DataActions) ReadFileInRepo(params ReadFileParams) ReadFileResult {
 	if params.Path == "" {
@@ -109,4 +117,20 @@ func (a *DataActions) ReadFileInRepo(params ReadFileParams) ReadFileResult {
 		Path:    absPath,
 		Content: string(data),
 	}
+}
+
+func (a *DataActions) ReadFilesInRepo(params ReadFilesParams) ReadFilesResult {
+	if len(params.Paths) == 0 {
+		return ReadFilesResult{
+			Results: []ReadFileResult{{Error: "no paths provided"}},
+		}
+	}
+
+	results := make([]ReadFileResult, 0, len(params.Paths))
+	for _, p := range params.Paths {
+		res := a.ReadFileInRepo(ReadFileParams{Path: p})
+		results = append(results, res)
+	}
+
+	return ReadFilesResult{Results: results}
 }

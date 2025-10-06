@@ -98,16 +98,18 @@ func NewDataActions(db *gorm.DB) *DataActions {
 	})
 
 	a.register(ActionSpec{
-		Name:        "read_file_in_this_repo",
-		Description: "Reads the content of a specific file from the current repository safely.",
-		Params:      ReadFileParams{},
-		// Returns:     ReadFileResult{},
+		Name:        "read_files_in_this_repo",
+		Description: "Reads the content of multiple files from the current repository safely.",
+		Params:      ReadFilesParams{},
 		Examples: []string{
 			`{
-				"path": "astra/agents/actions/actions.go"
+				"paths": [
+					"astra/agents/actions/actions.go",
+					"astra/agents/core/agent.go"
+				]
 			}`,
 		},
-		Fn: a.ReadFileInRepo,
+		Fn: a.ReadFilesInRepo,
 	})
 
 	return a
