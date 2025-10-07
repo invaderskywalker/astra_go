@@ -37,16 +37,16 @@ func ExtractJSON(input string) string {
 
 	// ---- SANITIZATION ----
 
-	// Unescape double backslashes and escaped quotes (from model output)
-	input = strings.ReplaceAll(input, `\\`, `\`)
-	input = strings.ReplaceAll(input, `\"`, `"`)
+	// // Unescape double backslashes and escaped quotes (from model output)
+	// input = strings.ReplaceAll(input, `\\`, `\`)
+	// input = strings.ReplaceAll(input, `\"`, `"`)
 
-	// Remove any trailing commas before closing braces/brackets
-	reTrailingComma := regexp.MustCompile(`,(\s*[}\]])`)
-	input = reTrailingComma.ReplaceAllString(input, "$1")
+	// // Remove any trailing commas before closing braces/brackets
+	// reTrailingComma := regexp.MustCompile(`,(\s*[}\]])`)
+	// input = reTrailingComma.ReplaceAllString(input, "$1")
 
 	// Clean up unnecessary newlines / indentation artifacts
-	input = strings.TrimSpace(input)
+	// input = strings.TrimSpace(input)
 
 	return input
 }
@@ -61,4 +61,24 @@ func ToJSON(v interface{}) string {
 		return ""
 	}
 	return strings.TrimSpace(string(bytes))
+}
+
+func CleanJSON(input string) string {
+	// Remove markdown fences or code block hints
+	input = strings.TrimSpace(strings.Trim(input, "`"))
+
+	// Extract first {...} block
+	re := regexp.MustCompile(`\{[\s\S]*\}`)
+	matches := re.FindStringSubmatch(input)
+	if len(matches) > 0 {
+		input = matches[0]
+	}
+
+	// Remove trailing junk (like text after last '}')
+	lastIdx := strings.LastIndex(input, "}")
+	if lastIdx != -1 {
+		input = input[:lastIdx+1]
+	}
+
+	return input
 }

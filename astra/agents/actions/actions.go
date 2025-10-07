@@ -49,7 +49,8 @@ func NewDataActions(db *gorm.DB) *DataActions {
 						"type": "replace",
 						"target": "return None",
 						"context_before": "def bar(",
-						"replacement": "return 'ok'"
+						"replacement": "return 'ok'",
+						"file": "path",
 					}
 				]
 			}`,
@@ -59,7 +60,8 @@ func NewDataActions(db *gorm.DB) *DataActions {
 						"type": "insert",
 						"target": "class UserController:",
 						"position": "after",
-						"content": "    def deactivate_user(self, user_id: int):\n        pass\n"
+						"content": "    def deactivate_user(self, user_id: int):\n        pass\n",
+						"file": "path",
 					}
 				]
 			}`,

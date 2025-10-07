@@ -286,6 +286,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 	fmt.Println("\n exec done --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
+	respJSON = jsonutils.CleanJSON(respJSON)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
@@ -450,11 +451,15 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			})
 			return
 		}
+		resp := ""
 
 		for chunk := range respCh {
 			a.responseCh <- chunk
+			resp += chunk
 			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
 		}
+
+		fmt.Println("answer... ", resp)
 
 		ch <- a.formatEvent("completed", map[string]interface{}{
 			"message": "Process completed successfully",
@@ -466,7 +471,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string]interface{}) {
-	fmt.Println("executePlan.  ", plan)
+	// fmt.Println("executePlan.  ", plan)
 	results = map[string]interface{}{
 		"action_results": map[string]interface{}{},
 	}

@@ -3,6 +3,9 @@ tree . -I "venv"
 find astra -type f -name "*" | while read file; do   echo "====== $file ======";   cat "$file";   echo -e "\n"; done
 
 
+find astra/agents/actions -type f -name "*" | while read file; do   echo "====== $file ======";   cat "$file";   echo -e "\n"; done
+
+
 
 1️⃣ Connect to your database
 psql -h localhost -p 5432 -U postgres -d astra_main
