@@ -283,7 +283,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	fmt.Println("\n exec done --- ", resp)
+	fmt.Println("\nexec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
 	respJSON = jsonutils.CleanJSON(respJSON)
@@ -360,11 +360,6 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 
 			// Step 4: Execute the plan
 			var planToExec map[string]interface{} = expanded
-			// if _, hasDetailed := expanded["detailed_plan"]; hasDetailed {
-			// 	planToExec = expanded
-			// } else {
-			// 	planToExec = map[string]interface{}{"detailed_plan": []interface{}{expanded}}
-			// }
 
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase": "executing_step", "index": stepIndex,
@@ -381,62 +376,11 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			})
 
 			results = append(results, map[string]interface{}{
-				"step_index": stepIndex,
-				// "step_text":  stepText,
-				"result": execRes,
+				"step_index":    stepIndex,
+				"executed_plan": planToExec,
+				"result":        execRes,
 			})
 
-			// // Step 5: Reflection — check whether to continue and next_step
-			// reflection := a.generateNextExecutionPlan(a.RoughPlan, 0, results)
-			// if reflection == nil {
-			// 	ch <- a.formatEvent("error", map[string]interface{}{
-			// 		"message": "reflection returned nil",
-			// 	})
-			// 	return
-			// }
-			// if errVal, ok := reflection["error"]; ok && errVal != nil {
-			// 	ch <- a.formatEvent("error", map[string]interface{}{
-			// 		"message": fmt.Sprint(errVal),
-			// 	})
-			// 	return
-			// }
-
-			// // Handle should_continue
-			// shouldContinue := false
-			// if sc, ok := reflection["should_continue"].(bool); ok {
-			// 	shouldContinue = sc
-			// }
-			// if !shouldContinue {
-			// 	break
-			// }
-
-			// // Handle next_step (object)
-			// nextStepObj, ok := reflection["next_step"].(map[string]interface{})
-			// if ok && len(nextStepObj) > 0 {
-			// 	stepSummary := fmt.Sprintf("%v (action: %v)", nextStepObj["step_id"], nextStepObj["action"])
-
-			// 	if dp, ok := a.RoughPlan["decision_process_output"].(map[string]interface{}); ok {
-			// 		if raw, ok := dp["mind_map_steps_in_natural_language"].([]interface{}); ok {
-			// 			dp["mind_map_steps_in_natural_language"] = append(raw, stepSummary)
-			// 		} else {
-			// 			dp["mind_map_steps_in_natural_language"] = []interface{}{stepSummary}
-			// 		}
-			// 	} else {
-			// 		a.RoughPlan["decision_process_output"] = map[string]interface{}{
-			// 			"mind_map_steps_in_natural_language": []interface{}{stepSummary},
-			// 		}
-			// 	}
-
-			// 	// Move to the newly added step
-			// 	stepIndex = len(a.RoughPlan["decision_process_output"].(map[string]interface{})["mind_map_steps_in_natural_language"].([]interface{}))
-			// }
-
-			// // Recalculate mindSteps (because we may have appended)
-			// // if dp, ok := a.RoughPlan["decision_process_output"].(map[string]interface{}); ok {
-			// // 	if raw, ok := dp["mind_map_steps_in_natural_language"].([]interface{}); ok {
-			// // 		mindSteps = raw
-			// // 	}
-			// // }
 		}
 
 		// Step 6: Summarize and generate final LLM response

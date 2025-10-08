@@ -106,10 +106,27 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	}
 
 	// --- 🧠 Sanity check for Go files before edits ---
+	// if strings.HasSuffix(file, ".go") {
+	// 	contentStr := strings.Join(lines, "\n")
+	// 	if !strings.Contains(contentStr, "package ") {
+	// 		return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
+	// 	}
+	// }
+	// --- 🧠 Sanity check for Go files before edits ---
+	// Skip sanity check if file is being created in this batch
 	if strings.HasSuffix(file, ".go") {
-		contentStr := strings.Join(lines, "\n")
-		if !strings.Contains(contentStr, "package ") {
-			return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
+		creating := false
+		for _, e := range edits {
+			if e.Type == "create_file" {
+				creating = true
+				break
+			}
+		}
+		if !creating {
+			contentStr := strings.Join(lines, "\n")
+			if !strings.Contains(contentStr, "package ") {
+				return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
+			}
 		}
 	}
 
@@ -140,9 +157,23 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 		}
 	}
 
-	newContent := strings.Join(lines, "\n")
-	if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", file, err)
+	// newContent := strings.Join(lines, "\n")
+	// if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
+	// 	return fmt.Errorf("failed to write file %s: %w", file, err)
+	// }
+	// 🚫 Skip rewriting if the file was just created in this batch
+	created := false
+	for _, e := range edits {
+		if e.Type == "create_file" {
+			created = true
+			break
+		}
+	}
+	if !created {
+		newContent := strings.Join(lines, "\n")
+		if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
+			return fmt.Errorf("failed to write file %s: %w", file, err)
+		}
 	}
 
 	_ = exec.Command("go", "fmt", file).Run()

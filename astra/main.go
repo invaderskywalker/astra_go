@@ -41,6 +41,8 @@ func main() {
 	chatCtrl := controllers.NewChatController(chatDAO)
 	agentCtrl := controllers.NewAgentsController(db.DB)
 
+	healthCtrl := controllers.NewHealthController()
+
 	logging.AppLogger.Info("Started")
 
 	minioClient, err := storage.NewMinIOClient(cfg)
@@ -76,6 +78,8 @@ func main() {
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
 	r.Mount("/agents", routes.AgentRoutes(agentCtrl, cfg)) // Add agents route
 	r.Mount("/test", routes.ScrapeRoutes(scrapeCtrl, cfg))
+
+	r.Mount("/health", routes.HealthRoutes(healthCtrl))
 
 	srv := &http.Server{
 		Addr:    ":8000",

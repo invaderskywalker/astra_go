@@ -39,7 +39,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 
 	a.register(ActionSpec{
 		Name:        "apply_code_edits",
-		Description: "Applies a list of code edits (replace, insert, create, delete) to source files. Only to be triggered when code edit is required",
+		Description: "Applies a list of code edits (replace, insert, create_file, delete_file) to source files. Only to be triggered when code edit is required. Always see this file for examples on how to add. code_edits_test",
 		Params:      ApplyCodeEditsParams{},
 		// Returns:     ApplyCodeEditsResult{},
 		Examples: []string{

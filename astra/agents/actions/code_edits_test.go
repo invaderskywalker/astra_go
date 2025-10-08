@@ -217,7 +217,7 @@ func (dao *UserDAO) CountUsers(ctx context.Context) (int64, error) {
 func TestApplyCodeEdits_CreateAndDeleteFile(t *testing.T) {
 	defer restoreTestTarget()
 	a := setupTestEnv(t)
-	tempFile := "astra/agents/actions/test_created.go"
+	tempFile := "test_created.go"
 
 	// create new file
 	paramsCreate := map[string]interface{}{
