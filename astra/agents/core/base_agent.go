@@ -86,8 +86,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		}
 	}()
 
-	// Build a structured description of the decision process stages
-	var stagesDesc string = ""
 	// Get lightweight action summaries (name + description) from runtime registry
 	actionSummaries := a.dataActions.ListActionSummaries()
 
@@ -109,8 +107,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			**Description:**  
 			%s  
 
-			**Stages:**  
-			%s  
 
 		## Your Task
 			Analyze the user query (and conversation context if available) to create an execution plan by:
@@ -162,7 +158,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		a.getHistory(),
 		jsonutils.ToJSON(actionSummaries),
 		a.Config.DecisionProcess.Description,
-		stagesDesc,
 		a.Config.OutputFormats.PlanOutputJSON,
 		query,
 	)
@@ -503,11 +498,6 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 
 func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query string) llm.ChatRequest {
 	// build a human-readable stages description from config
-	var stagesDesc string
-	for i, stage := range a.Config.DecisionProcess.Stages {
-		stagesDesc += fmt.Sprintf("Stage %d: %s\n  Purpose: %s\n  Behavior: %s\n  Outputs: %v\n\n",
-			i+1, stage.Name, stage.Purpose, stage.Behavior, "")
-	}
 
 	// Final system prompt: explicit, structured, include schemas and content
 	systemPrompt := fmt.Sprintf(`

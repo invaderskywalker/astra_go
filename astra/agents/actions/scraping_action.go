@@ -6,7 +6,8 @@ import (
 )
 
 type ScrapeURLsParams struct {
-	URLs []string `json:"urls"`
+	URLs      []string `json:"urls"`
+	WordLimit *int     `json:"word_limit,omitempty"`
 }
 
 type ScrapeURLsResult struct {

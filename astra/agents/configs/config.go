@@ -12,8 +12,8 @@ import (
 
 // DecisionProcessConfig represents the whole decision pipeline
 type DecisionProcessConfig struct {
-	Description string         `yaml:"description"`
-	Stages      []DecisionStep `yaml:"stages"`
+	Description string `yaml:"description"`
+	// Stages      []DecisionStep `yaml:"stages"`
 }
 
 type DecisionStep struct {

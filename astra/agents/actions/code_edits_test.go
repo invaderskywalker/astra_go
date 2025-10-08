@@ -255,3 +255,261 @@ func TestApplyCodeEdits_CreateAndDeleteFile(t *testing.T) {
 		t.Errorf("file was not deleted")
 	}
 }
+
+func TestApplyCodeEdits_InsertWithContextBefore(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":           "insert",
+				"target":         "fmt.Println(\"middle\")",
+				"context_before": "fmt.Println(\"start\")",
+				"position":       "after",
+				"content":        "    fmt.Println(\"INSERTED AFTER CONTEXT BEFORE\")",
+				"file":           testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("context insert failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "INSERTED AFTER CONTEXT BEFORE") {
+		t.Errorf("context-based insert not found")
+	}
+}
+
+func TestApplyCodeEdits_InsertWithContextAfter(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":          "insert",
+				"target":        "fmt.Println(\"middle\")",
+				"context_after": "fmt.Println(\"end\")",
+				"position":      "before",
+				"content":       "    fmt.Println(\"INSERTED USING CONTEXT AFTER\")",
+				"file":          testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("context after insert failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "INSERTED USING CONTEXT AFTER") {
+		t.Errorf("context after-based insert not found")
+	}
+}
+
+func TestApplyCodeEdits_InsertAtEOF(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":    "insert",
+				"target":  "__EOF__",
+				"content": "// APPENDED AT END OF FILE",
+				"file":    testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("insert EOF failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "// APPENDED AT END OF FILE") {
+		t.Errorf("expected content not appended at EOF")
+	}
+}
+
+func TestApplyCodeEdits_InsertAtBOF(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":    "insert",
+				"target":  "__BOF__",
+				"content": "// PREPENDED AT START OF FILE",
+				"file":    testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("insert BOF failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.HasPrefix(out, "// PREPENDED AT START OF FILE") {
+		t.Errorf("expected content not prepended at BOF")
+	}
+}
+
+func TestApplyCodeEdits_IndentedBlockReplace(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":        "replace",
+				"start":       "fmt.Println(\"start\")",
+				"end":         "fmt.Println(\"end\")",
+				"replacement": "    fmt.Println(\"BLOCK REPLACED WITH INDENTATION\")",
+				"file":        testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("indented block replace failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "BLOCK REPLACED WITH INDENTATION") {
+		t.Errorf("block replacement failed")
+	}
+}
+
+func TestApplyCodeEdits_MultipleInOneBatch(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":        "replace",
+				"target":      "fmt.Println(\"middle\")",
+				"replacement": "fmt.Println(\"MULTI-REPLACED\")",
+				"file":        testFile,
+			},
+			{
+				"type":     "insert",
+				"target":   "fmt.Println(\"end\")",
+				"position": "before",
+				"content":  "    fmt.Println(\"MULTI-INSERTED\")",
+				"file":     testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("multi-edit failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "MULTI-INSERTED") || !strings.Contains(out, "MULTI-REPLACED") {
+		t.Errorf("multiple edits not applied correctly")
+	}
+}
+
+func TestApplyCodeEdits_TargetNotFound(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":     "insert",
+				"target":   "fmt.Println(\"does not exist\")",
+				"position": "after",
+				"content":  "fmt.Println(\"SHOULD NOT PANIC\")",
+				"file":     testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("target not found insert failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if strings.Contains(out, "SHOULD NOT PANIC") {
+		t.Errorf("unexpected insert on non-existent target")
+	}
+}
+
+func TestApplyCodeEdits_InsertInsideFunction_GetUserByID(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	// Insert a debug log inside GetUserByID after the declaration
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":           "insert",
+				"target":         "err := dao.DB.WithContext(ctx).First(&user, id).Error",
+				"context_before": "func (dao *UserDAO) GetUserByID(",
+				"position":       "after",
+				"content":        "    fmt.Println(\"DEBUG: Entered GetUserByID\")",
+				"file":           testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("insert inside function failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "DEBUG: Entered GetUserByID") {
+		t.Errorf("expected insert inside GetUserByID not found")
+	}
+	if strings.Contains(out, "DEBUG: Entered GetUserByID2") {
+		t.Errorf("accidentally inserted inside GetUserByID2")
+	}
+}
+
+func TestApplyCodeEdits_ReplaceInsideFunction_GetUserByID2(t *testing.T) {
+	defer restoreTestTarget()
+	a := setupTestEnv(t)
+
+	// Replace an inner line in GetUserByID2
+	params := map[string]interface{}{
+		"edits": []map[string]interface{}{
+			{
+				"type":           "replace",
+				"target":         "return &user, nil",
+				"context_before": "func (dao *UserDAO) GetUserByID2(",
+				"replacement":    "return &user, fmt.Errorf(\"mock error from GetUserByID2\")",
+				"file":           testFile,
+			},
+		},
+	}
+
+	_, err := a.ExecuteAction("apply_code_edits", params)
+	if err != nil {
+		t.Fatalf("replace inside function failed: %v", err)
+	}
+
+	out := readFile(testFile)
+	if !strings.Contains(out, "mock error from GetUserByID2") {
+		t.Errorf("replacement inside GetUserByID2 not applied correctly")
+	}
+	if strings.Contains(out, "mock error from GetUserByID\"") {
+		t.Errorf("replacement wrongly affected GetUserByID")
+	}
+}

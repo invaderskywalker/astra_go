@@ -157,10 +157,6 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 		}
 	}
 
-	// newContent := strings.Join(lines, "\n")
-	// if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
-	// 	return fmt.Errorf("failed to write file %s: %w", file, err)
-	// }
 	// 🚫 Skip rewriting if the file was just created in this batch
 	created := false
 	for _, e := range edits {
@@ -222,6 +218,14 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 		pos = "after"
 	}
 
+	// 🚀 Special markers for file start and end
+	if edit.Target == "__BOF__" { // Beginning of File
+		return append(content, lines...)
+	}
+	if edit.Target == "__EOF__" { // End of File
+		return append(lines, content...)
+	}
+
 	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, true)
 	if idx == -1 {
 		return lines
@@ -235,7 +239,7 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 }
 
 func (a *DataActions) findLineIndex(lines []string, target, context string, before bool) int {
-	window := 5
+	window := 25
 	for i, line := range lines {
 		if safeLineMatch(line, target) {
 			if context == "" {
@@ -253,12 +257,15 @@ func (a *DataActions) findLineIndex(lines []string, target, context string, befo
 }
 
 func safeLineMatch(line, target string) bool {
-	line = strings.TrimSpace(line)
+	line = strings.TrimSpace(strings.Split(line, "//")[0]) // ignore inline comments
 	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
 	if line == target {
 		return true
 	}
-	matched, _ := regexp.MatchString(`^\s*`+regexp.QuoteMeta(target)+`\s*$`, line)
+	matched, _ := regexp.MatchString(`\b`+regexp.QuoteMeta(target)+`\b`, line)
 	return matched
 }
 

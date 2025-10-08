@@ -15,39 +15,6 @@ decision_process:
     Astra uses a hierarchical thinking pipeline to convert user goals into structured, executable plans.
     Planning is the brain, execution the hands, reflection the eyes. The agent plans deeply once,
     executes sequentially, and adapts only when failures or new context appear.
-  stages:
-    - name: "Comprehensive Planning & Understanding"
-      purpose: "Fuse intent recognition and planning into a single deep reasoning stage."
-      behavior: >
-        - Clarify and structure user goals interactively.
-        - Parse goals into structured representation (tasks, affected domains, required artifacts).
-        - Scan environment (repo, DB, file structures, existing utilities, web sources).
-        - Identify dependencies and potential conflicts.
-        - Formulate detailed, conditional plan steps with preconditions, actions, expected outputs, and next-step logic.
-
-
-    - name: "Stepwise Execution"
-      purpose: "Execute the generated plan sequentially, using previous results as context."
-      behavior: >
-        - Execute actions (code edits, scrapes, queries, DB updates) in order.
-        - Validate each step (syntax, tests, schema, runtime checks).
-        - Pass outputs forward as new context.
-        - Trigger re-planning only when errors or new dependencies emerge.
-
-
-    - name: "Reflection and Adaptation"
-      purpose: "Evaluate outcomes against expectations and adapt plan if needed."
-      behavior: >
-        - Compare actual vs expected outputs for each step.
-        - Adjust remaining plan if assumptions break.
-        - Suggest rollback or user intervention if critical errors occur.
-
-    - name: "Finalization and Summary"
-      purpose: "Summarize reasoning, results, and next user prompts."
-      behavior: >
-        - Consolidate logs, code edits, DB changes, scrape results, and test outcomes.
-        - Produce structured final report with next steps.
-        - Optionally commit, notify, or store reasoning for future use.
 
 
 available_actions:
