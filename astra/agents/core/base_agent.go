@@ -4,6 +4,7 @@ import (
 	"astra/astra/agents/actions"
 	"astra/astra/agents/configs"
 	"astra/astra/services/llm"
+	"astra/astra/sources/psql/dao"
 	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
@@ -37,11 +38,13 @@ type BaseAgent struct {
 	stepCh         chan map[string]interface{}
 	responseCh     chan string
 	mu             sync.Mutex
+	chatDAO        *dao.ChatMessageDAO
 }
 
 func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *BaseAgent {
 	cfg := configs.LoadConfig()
 	// fmt.Printf("cfg loaded: %+v\n", cfg) // Debug print
+	chatDAO := dao.NewChatMessageDAO(db)
 	agent := &BaseAgent{
 		Name:        agentName,
 		TenantID:    userID,
@@ -53,6 +56,7 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 		stepCh:      make(chan map[string]interface{}, 10),
 		responseCh:  make(chan string, 10),
 		dataActions: actions.NewDataActions(db),
+		chatDAO:     chatDAO,
 	}
 	logging.AppLogger.Info("BaseAgent initialized",
 		zap.Int("user_id", userID),
@@ -68,7 +72,7 @@ func (a *BaseAgent) handleEvents() {
 		case step := <-a.stepCh:
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
 		case resp := <-a.responseCh:
-			fmt.Println("resp., ", resp)
+			fmt.Print(resp, " ")
 		}
 	}
 }
@@ -96,6 +100,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		## Context
 		**Agent Name:** %s  
 		**Agent Role:** %s  
+		**Chat history** %s
 
 		**Available Actions (name + description):** 
 		%s
@@ -154,6 +159,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		`,
 		a.Config.AgentName,
 		a.Config.AgentRole,
+		a.getHistory(),
 		jsonutils.ToJSON(actionSummaries),
 		a.Config.DecisionProcess.Description,
 		stagesDesc,
@@ -201,7 +207,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
-	a.storeState("planning", plan)
+	// a.storeState("planning", plan)
 	a.RoughPlan = plan
 	return plan
 }
@@ -292,13 +298,16 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 	}
 
 	// persist for traceability
-	a.storeState("execution_step_expand", plan)
+	// a.storeState("execution_step_expand", plan)
 	a.ExecutionPlans = append(a.ExecutionPlans, plan)
 	return plan
 }
 
 func (a *BaseAgent) ProcessQuery(query string) <-chan string {
+
 	ch := make(chan string)
+
+	a.storeState("user_query", query)
 
 	go func() {
 		defer close(ch)
@@ -361,13 +370,24 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			// Step 4: Execute the plan
 			var planToExec map[string]interface{} = expanded
 
+			step, ok := expanded["next_step"].(map[string]interface{})
+			if !ok {
+				fmt.Println("368 -- err")
+			}
+
+			actionName, _ := step["action"].(string)
+			if actionName == "" {
+				fmt.Println("breaking no action name")
+				break
+			}
+
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase": "executing_step", "index": stepIndex,
 			})
 			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
 
 			execRes := a.executePlan(planToExec)
-			fmt.Println("result of execution ", execRes)
+			// fmt.Println("result of execution ", execRes)
 
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":   "executed_step",
@@ -382,6 +402,13 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			})
 
 		}
+
+		// Persist full plan state before summary/response
+		fullPlan := map[string]interface{}{
+			"rough_plan":      a.RoughPlan,
+			"execution_plans": a.ExecutionPlans,
+		}
+		a.storeState("full_plan", fullPlan)
 
 		// Step 6: Summarize and generate final LLM response
 		a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
@@ -404,6 +431,8 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		}
 
 		fmt.Println("answer... ", resp)
+
+		a.storeState("response", resp)
 
 		ch <- a.formatEvent("completed", map[string]interface{}{
 			"message": "Process completed successfully",
@@ -487,6 +516,8 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		Agent Name: %s
 		Agent Role: %s
 
+		Ongoing Conv: %s
+
 		You will produce a clear, helpful final response to the user's query.  
 		Use the provided execution results and context to generate:
 		1) A concise summary of what was done and why (1-3 short points).
@@ -523,6 +554,7 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 
 		a.Config.AgentName,
 		a.Config.AgentRole,
+		a.getHistory(),
 		query,
 		jsonutils.ToJSON(a.RoughPlan),
 		jsonutils.ToJSON(a.ExecutionPlans),
@@ -543,7 +575,32 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 }
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
-	// fmt.Println("storeState ", key, value)
+	ctx := context.Background() // You can pass a context with timeout if needed
+
+	// Safely serialize value to JSON for storage
+	contentBytes, err := json.Marshal(value)
+	if err != nil {
+		logging.ErrorLogger.Error("Failed to marshal state value", zap.String("key", key), zap.Error(err))
+		return
+	}
+
+	content := string(contentBytes)
+
+	// Save to DB via ChatMessageDAO
+	_, err = a.chatDAO.SaveMessage(ctx, a.SessionID, a.UserID, key, content)
+	if err != nil {
+		logging.ErrorLogger.Error("Failed to save message", zap.String("key", key), zap.Error(err))
+	}
+}
+
+func (a *BaseAgent) getHistory() []map[string]string {
+	ctx := context.Background()
+	history, err := a.chatDAO.GetChatHistoryBySession(ctx, a.SessionID)
+	if err != nil {
+		return []map[string]string{}
+	}
+	return history
+
 }
 
 // --- 2) small helper: formatEvent ---
