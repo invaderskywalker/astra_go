@@ -3,7 +3,6 @@ package scraper
 import (
 	"astra/astra/utils/types"
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -173,7 +172,7 @@ func (s *Scraper) ReadMultiplePages(urls []string, maxConcurrent int) ([]types.S
 				results[i] = types.ScrapeResult{URL: url, Content: "", Error: err.Error()}
 				return
 			}
-			fmt.Println("content -- ", content)
+			// fmt.Println("content -- ", content)
 
 			text := ExtractCleanText(content)
 			results[i] = types.ScrapeResult{URL: url, Content: text, Error: ""}

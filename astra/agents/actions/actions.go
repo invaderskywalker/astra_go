@@ -32,6 +32,7 @@ type ActionSpec struct {
 
 // NewDataActions initializes the DataActions registry.
 func NewDataActions(db *gorm.DB) *DataActions {
+
 	a := &DataActions{
 		actions: make(map[string]ActionSpec),
 		db:      db,
@@ -112,6 +113,28 @@ func NewDataActions(db *gorm.DB) *DataActions {
 			}`,
 		},
 		Fn: a.ReadFilesInRepo,
+	})
+
+	a.register(ActionSpec{
+		Name:        "scrape_urls",
+		Description: "Scrapes given URLs and returns their text content using Playwright.",
+		Params:      ScrapeURLsParams{},
+		Returns:     ScrapeURLsResult{},
+		Examples: []string{
+			`{"urls": ["https://example.com", "https://wikipedia.org"]}`,
+		},
+		Fn: a.ScrapeURLs,
+	})
+
+	a.register(ActionSpec{
+		Name:        "query_web",
+		Description: "Performs a web search for the given queries and returns text snippets (DuckDuckGo or similar).",
+		Params:      QueryWebParams{},
+		Returns:     QueryWebResult{},
+		Examples: []string{
+			`{"queries": ["best golang web scraper",...], "result_limit": 3}`,
+		},
+		Fn: a.QueryWeb,
 	})
 
 	return a
