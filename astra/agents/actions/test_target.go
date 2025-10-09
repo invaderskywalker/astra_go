@@ -137,7 +137,7 @@ func generateNextExecutionPlan(roughPlan map[string]interface{}, stepIndex int, 
 	fmt.Println("\nexec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
-	respJSON = jsonutils.CleanJSON(respJSON)
+	// respJSON = jsonutils.CleanJSON(respJSON)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}

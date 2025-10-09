@@ -6,14 +6,7 @@ import (
 	"strings"
 )
 
-// ExtractJSON tries to extract a JSON block from LLM output.
-//
-// Priority:
-// 1. Triple-backtick fenced ```json ... ```
-// 2. Any {...} JSON object
-//
-// It also sanitizes common LLM formatting issues like escaped quotes,
-// double backslashes, stray commas, and invisible Unicode characters.
+// ExtractJSON tries to extract and sanitize a JSON block from LLM output.
 func ExtractJSON(input string) string {
 	// Remove BOMs and invisible control characters
 	input = strings.TrimSpace(strings.Map(func(r rune) rune {
@@ -35,50 +28,76 @@ func ExtractJSON(input string) string {
 		}
 	}
 
-	// ---- SANITIZATION ----
+	// 🔹 Remove inline // comments safely (but not in strings)
+	input = removeJSONComments(input)
 
-	// // Unescape double backslashes and escaped quotes (from model output)
-	// input = strings.ReplaceAll(input, `\\`, `\`)
-	// input = strings.ReplaceAll(input, `\"`, `"`)
-
-	// // Remove any trailing commas before closing braces/brackets
-	// reTrailingComma := regexp.MustCompile(`,(\s*[}\]])`)
-	// input = reTrailingComma.ReplaceAllString(input, "$1")
-
-	// Clean up unnecessary newlines / indentation artifacts
-	// input = strings.TrimSpace(input)
-
+	input = CleanJSON(input)
 	return input
 }
 
 // ToJSON serializes a Go value to a JSON string with indentation.
-// Returns an empty string if serialization fails.
 func ToJSON(v interface{}) string {
-	// Use json.MarshalIndent for pretty-printed JSON with 2-space indentation
 	bytes, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		// Return empty string on error, consistent with ExtractJSON's fallback
 		return ""
 	}
 	return strings.TrimSpace(string(bytes))
 }
 
+// CleanJSON trims junk before/after braces and code fences.
 func CleanJSON(input string) string {
-	// Remove markdown fences or code block hints
 	input = strings.TrimSpace(strings.Trim(input, "`"))
 
-	// Extract first {...} block
 	re := regexp.MustCompile(`\{[\s\S]*\}`)
-	matches := re.FindStringSubmatch(input)
-	if len(matches) > 0 {
-		input = matches[0]
+	if match := re.FindString(input); match != "" {
+		input = match
 	}
 
-	// Remove trailing junk (like text after last '}')
-	lastIdx := strings.LastIndex(input, "}")
-	if lastIdx != -1 {
+	if lastIdx := strings.LastIndex(input, "}"); lastIdx != -1 {
 		input = input[:lastIdx+1]
 	}
 
 	return input
+}
+
+// --- NEW FUNCTION ---
+// removeJSONComments removes // comments that are not inside string literals.
+func removeJSONComments(input string) string {
+	var sb strings.Builder
+	inString := false
+	escaped := false
+
+	lines := strings.Split(input, "\n")
+	for _, line := range lines {
+		cleanLine := ""
+		for i := 0; i < len(line); i++ {
+			ch := line[i]
+
+			// Handle escape in strings
+			if ch == '\\' && inString {
+				escaped = !escaped
+				cleanLine += string(ch)
+				continue
+			}
+
+			if ch == '"' && !escaped {
+				inString = !inString
+				cleanLine += string(ch)
+				continue
+			}
+
+			// Detect // when not inside string
+			if !inString && i+1 < len(line) && ch == '/' && line[i+1] == '/' {
+				// stop reading this line at comment start
+				break
+			}
+
+			cleanLine += string(ch)
+			escaped = false
+		}
+		sb.WriteString(strings.TrimRight(cleanLine, " \t"))
+		sb.WriteByte('\n')
+	}
+
+	return sb.String()
 }
