@@ -40,8 +40,12 @@ func NewDataActions(db *gorm.DB) *DataActions {
 	}
 
 	a.register(ActionSpec{
-		Name:        "apply_code_edits",
-		Description: "Applies a list of code edits (replace, insert, create_file, delete_file) to source files. Only to be triggered when code edit is required. Always see this file for examples on how to add. code_edits_test",
+		Name: "apply_code_edits",
+		Description: `
+			Applies a list of code edits (replace, insert, create_file, delete_file) to source files. 
+			Only to be triggered when code edit is required. 
+			Always see this file for examples on how to add: code_edits_test
+		`,
 		Details: `
 			# 🧠 Astra Code Editing Engine
 
@@ -157,6 +161,41 @@ func NewDataActions(db *gorm.DB) *DataActions {
 					}
 
 			---
+
+			## 🧠 LLM Prompt Guidelines for Safe Code Editing
+
+				When generating code edit instructions for this action, **follow these mandatory rules**:
+
+				1. **Preserve formatting and indentation exactly.**
+				- Do not add or remove backslashes inside string literals.
+				- Do not escape existing ` + "`\\n` or `\\t`" + ` sequences.
+				- Do not collapse multi-line raw strings or alter backticks.
+
+				2. **Respect raw string literals.**
+				- If you see a back-tick raw string,  
+					keep all internal newlines and tabs exactly as written.
+				- Never replace backticks with double quotes.
+
+				3. **No concatenation unless explicitly required.**
+				- Avoid breaking raw strings into "+" pieces.
+				- Keep long literals intact unless splitting is unavoidable for variable interpolation.
+
+				4. **Edit only the target block.**
+				- Never reindent or reformat the entire file.
+				- Only modify the specified region around the <target> and <context_before>.
+
+				5. **Preserve valid Go syntax.**
+				- Ensure all edits compile.
+				- Do not introduce stray slashes, quotes, or broken multiline strings.
+
+				6. **For simple replacements (single-line changes), prefer direct substitution.**
+				- When both <target> and <replacement> are provided without <start>/<end>, 
+					Astra should replace the single line containing <target> with <replacement>.
+				- Avoid deleting or moving code unless explicitly instructed.
+				- This ensures minimal disruption and avoids structural errors.
+
+
+				---
 
 
 			**In essence:**  
@@ -306,6 +345,54 @@ func NewDataActions(db *gorm.DB) *DataActions {
 			``,
 		},
 		Fn: a.QueryWeb,
+	})
+
+	a.register(ActionSpec{
+		Name:        "fmt_vet_build",
+		Description: "Formats (go fmt), vets (go vet), and builds (go build) the entire Go project. Used to validate Astra’s code after edits.",
+		Details: `
+			# 🧹 Astra Code Validation Action
+
+			This action ensures that Astra’s Go codebase is correctly formatted,
+			static analysis passes, and the project compiles without errors.
+
+			- Runs: go fmt ./...
+			- Runs: go vet ./...
+			- Runs: go build ./...
+
+			**Usage Example**
+			{
+				"action": "fmt_vet_build",
+				"action_params": {}
+			}
+		`,
+		Params:   struct{}{}, // no params needed
+		Examples: []string{`{}`},
+		Fn:       a.FmtVetBuild,
+	})
+
+	a.register(ActionSpec{
+		Name:        "think_aloud_reasoning",
+		Description: "Use this when you are about to make some important changes, before performing risky actions such as code edits or critical logic updates, because correct reasoning is really important.",
+		Details: `
+			# 🧠 Astra Think-Aloud Reasoning Action
+
+			This special action triggers Astra's internal reasoning stream.
+
+			When Astra decides to call this action in its plan, it pauses to *think aloud* —  
+			streaming its internal thought process using the same LLM client.
+
+			The reasoning can include:
+			- Why a certain code edit or step is being considered.
+			- What potential effects or risks it might have.
+			- Final summarized decision under "FINAL THOUGHT:".
+
+			It does not perform any edit or side-effect itself.
+			The action is meant purely for deep reasoning visibility before a risky or uncertain operation.
+		`,
+		Params:   struct{}{}, // no params required, but agent may internally provide context
+		Examples: []string{`{}`},
+		Fn:       nil, // intentionally nil — handled internally in BaseAgent
 	})
 
 	return a

@@ -47,9 +47,12 @@ func TestApplyCodeEdits_ReplaceKnownFile(t *testing.T) {
 		"edits": []map[string]interface{}{
 			{
 				"type":           "replace",
-				"target":         "fmt.Println(\"middle\")",
-				"context_before": "func DemoFunction(",
-				"replacement":    "fmt.Println(\"REPLACED MIDDLE\")",
+				"target":         "userPrompt = fmt.Sprintf(",
+				"context_before": "var userPrompt string",
+				"replacement":    "userPrompt = fmt.Sprintf(`\n\tCurrent Date: %s\n\tPlease analyze and create a good thoughtful \n\texecution plan and output a single object\n\tPlease stick to the json output format and include all output in the JSON\n\n\t****important*****\n\t- Respond ONLY with valid JSON only stick to this format: %s\n\t- Any text outside the JSON is considered an error.\n\t`, time.Now().Format(\"2006-01-02\"), a.Config.OutputFormats.ExecutionStepOutputJSON)",
+				"start":          "    userPrompt = fmt.Sprintf(`",
+				"end":            ")",
+				"position":       "replace",
 				"file":           testFile,
 			},
 		},
@@ -61,8 +64,8 @@ func TestApplyCodeEdits_ReplaceKnownFile(t *testing.T) {
 	}
 
 	out := readFile(testFile)
-	if !strings.Contains(out, "REPLACED MIDDLE") {
-		t.Errorf("replacement not found in file")
+	if !strings.Contains(out, "Current Date:") {
+		t.Errorf("replacement not applied correctly; expected replacement snippet not found")
 	}
 
 	fmt.Println("✅ Replace test result:", result)

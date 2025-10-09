@@ -72,7 +72,7 @@ func (a *BaseAgent) handleEvents() {
 		case step := <-a.stepCh:
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
 		case resp := <-a.responseCh:
-			fmt.Print(resp, " ")
+			fmt.Print(resp, "")
 		}
 	}
 }
@@ -162,7 +162,10 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		query,
 	)
 
-	user_message := fmt.Sprintf(`
+	currentDateStr := time.Now().Format("January 2, 2006")
+	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
+
+	user_message := datePreamble + fmt.Sprintf(`
 		Please analyze and create an execution plan for the following user query:
 			User Query: %s
 			Remember to:
@@ -258,7 +261,10 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 
 	// fmt.Println("debug generateNextExecutionPlan prompt ", systemPrompt)
 
-	userPrompt = fmt.Sprintf(`
+	currentDateStr := time.Now().Format("January 2, 2006")
+	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
+
+	userPrompt = datePreamble + fmt.Sprintf(`
 		Please analyze and create a good thoughtful 
 		execution plan and output a single object
 		Please stick to the json output format and include all output in the JSON
@@ -371,6 +377,8 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			}
 
 			actionName, _ := step["action"].(string)
+			fmt.Println("action name .. ", actionName)
+
 			if actionName == "" {
 				fmt.Println("breaking no action name")
 				break
@@ -380,6 +388,20 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				"phase": "executing_step", "index": stepIndex,
 			})
 			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
+
+			// 🧠 Intercept the internal think-aloud reasoning action
+			if actionName == "think_aloud_reasoning" {
+				contextInfo := fmt.Sprintf("Astra is about to apply code edits or critical changes using the plan: %+v", planToExec)
+				goal := "Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
+				finalThought := a.thinkAloud(contextInfo, goal)
+
+				results = append(results, map[string]interface{}{
+					"step_index":    stepIndex,
+					"executed_plan": planToExec,
+					"result":        finalThought,
+				})
+				continue
+			}
 
 			execRes := a.executePlan(planToExec)
 			// fmt.Println("result of execution ", execRes)
@@ -405,10 +427,9 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		}
 		a.storeState("full_plan", fullPlan)
 
-		// Step 6: Summarize and generate final LLM response
+		// generate  LLM response
 		a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
 		respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
-
 		respCh, err := a.LLM.RunStream(context.Background(), respReq)
 		if err != nil {
 			a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
@@ -418,16 +439,14 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			return
 		}
 		resp := ""
-
 		for chunk := range respCh {
 			a.responseCh <- chunk
 			resp += chunk
 			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
 		}
-
-		fmt.Println("answer... ", resp)
-
+		// fmt.Println("answer... ", resp)
 		a.storeState("response", resp)
+		//
 
 		ch <- a.formatEvent("completed", map[string]interface{}{
 			"message": "Process completed successfully",
@@ -610,4 +629,70 @@ func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
 			a.Name, a.SessionID, eventType, time.Now().UTC().Format(time.RFC3339))
 	}
 	return string(b)
+}
+
+func (a *BaseAgent) thinkAloud(contextInfo, goal string) string {
+	a.stepCh <- map[string]interface{}{
+		"message": "Starting internal thought process",
+		"context": contextInfo,
+		"goal":    goal,
+	}
+
+	systemPrompt := fmt.Sprintf(`
+        You are Astra's internal reasoning module.
+        Before taking a real-world action, you think carefully about what might happen.
+        Your goal is to reason step-by-step, stream your thought process,
+        and finally summarize your decision in one paragraph.
+
+        Context: %s
+        Goal: %s
+
+        Behavior:
+        - Think out loud.
+        - Stream thoughts one by one.
+        - Conclude with "FINAL THOUGHT:" followed by your summary.
+        - Do not produce JSON, just human-readable reasoning.
+    `, contextInfo, goal)
+
+	currentDateStr := time.Now().Format("January 2, 2006")
+	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
+
+	userPrompt := datePreamble + " Begin your internal reasoning stream now and if doing code edits. reason clearly what edit , where etc"
+
+	req := llm.ChatRequest{
+		Model: DefaultModel,
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		Stream: true,
+	}
+
+	// Start streaming thoughts
+	respCh, err := a.LLM.RunStream(context.Background(), req)
+	if err != nil {
+		a.stepCh <- map[string]interface{}{"message": "thinking stream failed", "error": err.Error()}
+		return "thinking failed"
+	}
+
+	finalThought := ""
+	for chunk := range respCh {
+		// Stream every thought to console + response channel
+		a.responseCh <- chunk
+		finalThought += chunk
+	}
+
+	a.stepCh <- map[string]interface{}{
+		"message":       "Finished thinking",
+		"final_thought": finalThought,
+	}
+
+	// // Optionally save this reasoning trace
+	// a.storeState("internal_thought", map[string]interface{}{
+	// 	"context": contextInfo,
+	// 	"goal":    goal,
+	// 	"thought": finalThought,
+	// })
+
+	return finalThought
 }

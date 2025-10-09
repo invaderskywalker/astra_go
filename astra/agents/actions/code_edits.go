@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"go.uber.org/zap"
@@ -191,23 +190,43 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 		return lines
 	}
 
+	fmt.Println("debug ", edit.Start != "", edit.End != "")
+
+	// --- 🧩 Multiline region replace mode ---
 	if edit.Start != "" && edit.End != "" {
 		startIdx := a.findLineIndex(lines, edit.Start, edit.ContextBefore, true)
 		if startIdx == -1 {
+			fmt.Println("⚠️  start marker not found:", edit.Start)
 			return lines
 		}
-		endIdx := a.findLineIndex(lines[startIdx:], edit.End, edit.ContextAfter, false)
+
+		// find the end marker — trim spaces/tabs before comparing
+		endIdx := -1
+		for i := startIdx + 1; i < len(lines); i++ {
+			line := strings.TrimSpace(lines[i])
+			if strings.Contains(line, strings.TrimSpace(edit.End)) {
+				endIdx = i
+				break
+			}
+		}
 		if endIdx == -1 {
+			fmt.Println("⚠️  end marker not found:", edit.End)
 			return lines
 		}
-		endIdx += startIdx
+
+		fmt.Printf("🧠 Replacing lines %d–%d in %s\n", startIdx, endIdx, edit.File)
 		return append(lines[:startIdx], append(replacement, lines[endIdx+1:]...)...)
 	}
 
+	fmt.Println("debug 2 ", edit.Target, edit.ContextBefore)
+
+	// --- 🧩 Single-line replace fallback ---
 	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, true)
 	if idx == -1 {
+		fmt.Println("⚠️  target not found:", edit.Target)
 		return lines
 	}
+
 	return append(append(lines[:idx], replacement...), lines[idx+1:]...)
 }
 
@@ -239,16 +258,20 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 }
 
 func (a *DataActions) findLineIndex(lines []string, target, context string, before bool) int {
-	window := 25
+	window := 200
 	for i, line := range lines {
 		if safeLineMatch(line, target) {
+			fmt.Println(" ---> ", safeLineMatch(line, target), i, line)
 			if context == "" {
+				fmt.Println(" ---> 1")
 				return i
 			}
 			if before && a.hasContextInRange(lines, math.Max(0, i-window), window, context) {
+				fmt.Println(" ---> 2")
 				return i
 			}
 			if !before && a.hasContextInRange(lines, i+1, window, context) {
+				fmt.Println(" ---> 3")
 				return i
 			}
 		}
@@ -257,16 +280,18 @@ func (a *DataActions) findLineIndex(lines []string, target, context string, befo
 }
 
 func safeLineMatch(line, target string) bool {
-	line = strings.TrimSpace(strings.Split(line, "//")[0]) // ignore inline comments
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	if line == target {
-		return true
-	}
-	matched, _ := regexp.MatchString(`\b`+regexp.QuoteMeta(target)+`\b`, line)
-	return matched
+	line = strings.ToLower(strings.TrimSpace(strings.Split(line, "//")[0]))
+	target = strings.ToLower(strings.TrimSpace(target))
+
+	// normalize both
+	line = strings.ReplaceAll(line, "`", "")
+	target = strings.ReplaceAll(target, "`", "")
+
+	// tolerate any whitespace mismatch
+	line = strings.Join(strings.Fields(line), " ")
+	target = strings.Join(strings.Fields(target), " ")
+
+	return strings.Contains(line, target)
 }
 
 func (a *DataActions) hasContextInRange(lines []string, start, window int, context string) bool {
@@ -292,4 +317,39 @@ func (a *DataActions) rollbackFiles(editsByFile map[string][]CodeEdit) {
 			logging.AppLogger.Info("rolled back file", zap.String("file", file))
 		}
 	}
+}
+
+func (a *DataActions) FmtVetBuild() (map[string]interface{}, error) {
+	cmds := [][]string{
+		{"go", "fmt", "./..."},
+		{"go", "vet", "./..."},
+		{"go", "build", "./..."},
+	}
+
+	outputs := []string{}
+
+	for _, cmdArgs := range cmds {
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		cmd.Dir = "." // project root
+		out, err := cmd.CombinedOutput()
+		if len(out) > 0 {
+			outputs = append(outputs, fmt.Sprintf("🔍 %s output:\n%s\n", strings.Join(cmdArgs, " "), string(out)))
+		}
+		if err != nil {
+			failMsg := fmt.Sprintf("❌ %s failed: %v", strings.Join(cmdArgs, " "), err)
+			outputs = append(outputs, failMsg)
+			return map[string]interface{}{
+				"success": false,
+				"output":  strings.Join(outputs, "\n"),
+			}, err
+		}
+	}
+
+	successMsg := "✅ Go code formatted, vetted, and compiled successfully."
+	outputs = append(outputs, successMsg)
+
+	return map[string]interface{}{
+		"success": true,
+		"output":  strings.Join(outputs, "\n"),
+	}, nil
 }
