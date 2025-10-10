@@ -104,15 +104,6 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 		lines = strings.Split(string(content), "\n")
 	}
 
-	// --- 🧠 Sanity check for Go files before edits ---
-	// if strings.HasSuffix(file, ".go") {
-	// 	contentStr := strings.Join(lines, "\n")
-	// 	if !strings.Contains(contentStr, "package ") {
-	// 		return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
-	// 	}
-	// }
-	// --- 🧠 Sanity check for Go files before edits ---
-	// Skip sanity check if file is being created in this batch
 	if strings.HasSuffix(file, ".go") {
 		creating := false
 		for _, e := range edits {
@@ -131,14 +122,6 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 
 	for _, edit := range edits {
 		fmt.Println("→ applying edit:", edit.Type, "target:", edit.Target, "position:", edit.Position)
-
-		// Normalize destructive replace to safe insert
-		if edit.Type == "replace" && strings.HasPrefix(strings.TrimSpace(edit.Target), "type ") {
-			logging.AppLogger.Warn("auto-converting risky replace into safe insert",
-				zap.String("file", edit.File), zap.String("target", edit.Target))
-			edit.Type = "insert"
-			edit.Position = "after"
-		}
 
 		switch edit.Type {
 		case "create_file":
@@ -180,14 +163,15 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 
 func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 	replacement := strings.Split(edit.Replacement, "\n")
-
-	// 🚨 Prevent replacing entire type/function declarations accidentally
-	if strings.HasPrefix(strings.TrimSpace(edit.Target), "type ") ||
-		strings.HasPrefix(strings.TrimSpace(edit.Target), "func ") {
-		logging.AppLogger.Warn("skipping risky replace operation on code declaration",
-			zap.String("target", edit.Target),
-			zap.String("file", edit.File))
-		return lines
+	pos := edit.Position
+	if pos == "" {
+		pos = "after"
+	}
+	var before bool
+	if pos == "before" {
+		before = true
+	} else {
+		before = false
 	}
 
 	fmt.Println("debug ", edit.Start != "", edit.End != "")
@@ -221,9 +205,9 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 	fmt.Println("debug 2 ", edit.Target, edit.ContextBefore)
 
 	// --- 🧩 Single-line replace fallback ---
-	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, true)
+	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, before)
 	if idx == -1 {
-		fmt.Println("⚠️  target not found:", edit.Target)
+		fmt.Println("⚠️  replace target not found:", edit.Target)
 		return lines
 	}
 
@@ -236,6 +220,12 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 	if pos == "" {
 		pos = "after"
 	}
+	var before bool
+	if pos == "before" {
+		before = true
+	} else {
+		before = false
+	}
 
 	// 🚀 Special markers for file start and end
 	if edit.Target == "__BOF__" { // Beginning of File
@@ -245,8 +235,9 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 		return append(lines, content...)
 	}
 
-	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, true)
+	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, before)
 	if idx == -1 {
+		fmt.Println("⚠️  insert target not found:", edit.Target)
 		return lines
 	}
 
@@ -260,8 +251,8 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 func (a *DataActions) findLineIndex(lines []string, target, context string, before bool) int {
 	window := 200
 	for i, line := range lines {
+		// fmt.Println(" ---> ", safeLineMatch(line, target), line, i, before)
 		if safeLineMatch(line, target) {
-			fmt.Println(" ---> ", safeLineMatch(line, target), i, line)
 			if context == "" {
 				fmt.Println(" ---> 1")
 				return i

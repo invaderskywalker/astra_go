@@ -221,8 +221,8 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 
 	// Get full action specs (params, returns, examples) from runtime registry
 	fullActions := a.dataActions.ListActions()
-	actionsJSON, _ := json.MarshalIndent(fullActions, "", "  ")
-	actionsJSONStr := string(actionsJSON)
+	// actionsJSON, _ := json.MarshalIndent(fullActions, "", "  ")
+	// actionsJSONStr := string(actionsJSON)
 
 	var systemPrompt string
 	var userPrompt string
@@ -233,7 +233,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		Context:
 		- Full mind map plan: %s
 		- Previous execution results: %s
-		- Available actions (full spec): %s
+		- Available actions (full spec and details (very important to understand correct)): %s
 
 		Task:
 		You are provided with a full mind map of responding 
@@ -255,7 +255,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		`,
 		jsonutils.ToJSON(roughPlan),
 		jsonutils.ToJSON(results),
-		actionsJSONStr,
+		jsonutils.ToJSON(fullActions),
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
@@ -414,7 +414,9 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				continue
 			}
 
+			fmt.Println("executing plan ... ")
 			execRes := a.executePlan(planToExec)
+			fmt.Println("executed plan ... ")
 			// fmt.Println("result of execution ", execRes)
 
 			ch <- a.formatEvent("intermediate", map[string]interface{}{

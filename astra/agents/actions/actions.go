@@ -38,11 +38,34 @@ func NewDataActions(db *gorm.DB) *DataActions {
 	}
 
 	a.register(ActionSpec{
+		Name:        "create_learning_knowledge",
+		Description: "Creates a new LearningKnowledge entry (user knowledge artifact, with type, blob, applicable scope, related experiences).",
+		Details:     `Creates a LearningKnowledge artifact for a user, to be used for learning memory, curriculum knowledge, etc.`,
+		Params:      CreateLearningKnowledgeParams{},
+		Fn:          a.CreateLearningKnowledge,
+	})
+
+	a.register(ActionSpec{
+		Name:        "update_learning_knowledge",
+		Description: "Updates an existing LearningKnowledge entry by ID.",
+		Details:     `Updates the selected fields of an existing knowledge artifact by ID.`,
+		Params:      UpdateLearningKnowledgeParams{},
+		Fn:          a.UpdateLearningKnowledge,
+	})
+
+	a.register(ActionSpec{
+		Name:        "fetch_learning_knowledge",
+		Description: "Fetches LearningKnowledge artifacts by ID, UserID, optionally with limit.",
+		Details:     `Retrieves knowledge artifacts by UUID or user, supporting pagination/limits; results ordered by created_at desc.`,
+		Params:      FetchLearningKnowledgeParams{},
+		Fn:          a.FetchLearningKnowledge,
+	})
+
+	a.register(ActionSpec{
 		Name: "apply_code_edits",
 		Description: `
 			Applies a list of code edits (replace, insert, create_file, delete_file) to source files. 
 			Only to be triggered when code edit is required. 
-			Always see this file for examples on how to add: code_edits_test
 		`,
 		Details: `
 			# 🧠 Astra Code Editing Engine
@@ -64,7 +87,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 
 					• CodeEdit – represents a single modification:
 						- type: "insert" | "replace" | "create_file" | "delete_file"
-						- file: path to target file
+						- file: path to target file (most important to provide)
 						- target: reference line to locate edit
 						- start / end: block boundaries (for multi-line replaces)
 						- replacement: content to replace existing code
@@ -73,23 +96,19 @@ func NewDataActions(db *gorm.DB) *DataActions {
 						- context_before / context_after: lines near target for safe matching
 						- Special targets: "__BOF__" (file start), "__EOF__" (file end)
 
-					• ApplyCodeEditsParams – batch container:
-						- Edits []CodeEdit
-
-					• ApplyCodeEditsResult – operation output:
-						- Success: true/false
-						- EditsApplied: number of edits
-						- Error: error message if failed
-
 			---
 
 			## 🧠 Execution Flow
 
 					1. Validate Edits
 							Each edit is checked for valid file paths and grouped by file.
-
-					2. Read & Sanity Check
-							Loads file lines, ensures “package” exists for Go files.
+					
+					2. Reasoning
+						What to add, where to add 
+						- like mostly add new functions at the end, 
+						- while replacing multi line use start, end 
+						- and while replacing single line use target
+						- also use context before/ context after to exactly distinguish between similar lines at multiple places
 
 					3. Apply Edits
 							Each edit type is processed individually:
@@ -103,6 +122,15 @@ func NewDataActions(db *gorm.DB) *DataActions {
 							It searches nearby lines (window ≈ 25) to avoid false matches.
 
 			---
+			## Important
+
+			__BOF__ and __EOF__ are also supported for targets
+			You should use insert if writing a new code (like new line(s)/ new functinos, new classes)
+			Use replace mostly if you are trying to update some line(s) of code with other block
+
+			While giving a json output never use backticks. always ouptut proper JSON
+
+			----
 
 			## 🧪 Example Edit Instructions
 
@@ -111,9 +139,24 @@ func NewDataActions(db *gorm.DB) *DataActions {
 						"edits": [
 							{
 								"type": "replace",
-								"target": "fmt.Println(\"middle\")",
-								"context_before": "func DemoFunction(",
+								"target": "fmt.Println(\"middle\")", // single line target
+								"context_before": "func DemoFunction(", // a landmark line before this target to clearly identify this target
+								"position": "after", // after this target which is inside this context
 								"replacement": "fmt.Println(\"REPLACED MIDDLE\")",
+								"file": "test_target.go"
+							}
+						]
+					}
+
+					✅ Replace Multi line
+					{
+						"edits": [
+							{
+								"type": "replace",
+								"start": "some code line",
+								"end": ""
+								"context_before": "func (dao *UserDAO) GetUserByID2(",
+								"replacement": "return &user, fmt.Errorf(\"mock error from GetUserByID2\")",
 								"file": "test_target.go"
 							}
 						]
@@ -125,26 +168,14 @@ func NewDataActions(db *gorm.DB) *DataActions {
 							{
 								"type": "insert",
 								"target": "err := dao.DB.WithContext(ctx).First(&user, id).Error",
-								"context_before": "func (dao *UserDAO) GetUserByID(",
-								"position": "after",
-								"content": "    fmt.Println(\"DEBUG: Entered GetUserByID\")",
+								"context_before": "func (dao *UserDAO) GetUserByID(", // the fn insifde which to make edit
+								"position": "after", // after this target which is inside this context
+								"content": "    fmt.Println(\"DEBUG: Entered GetUserByID\")", // the content to replace with
 								"file": "test_target.go"
 							}
 						]
 					}
 
-					✅ Replace Return in Specific Function
-					{
-						"edits": [
-							{
-								"type": "replace",
-								"target": "return &user, nil",
-								"context_before": "func (dao *UserDAO) GetUserByID2(",
-								"replacement": "return &user, fmt.Errorf(\"mock error from GetUserByID2\")",
-								"file": "test_target.go"
-							}
-						]
-					}
 
 					✅ Insert at End of File
 					{
