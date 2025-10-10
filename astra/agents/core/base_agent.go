@@ -391,9 +391,20 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 
 			// 🧠 Intercept the internal think-aloud reasoning action
 			if actionName == "think_aloud_reasoning" {
-				contextInfo := fmt.Sprintf("Astra is about to apply code edits or critical changes using the plan: %+v", planToExec)
-				goal := "Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
-				finalThought := a.thinkAloud(contextInfo, goal)
+				var params map[string]interface{}
+				if p, ok := step["action_params"].(map[string]interface{}); ok {
+					params = p
+				} else {
+					params = map[string]interface{}{}
+					if step["action_params"] != nil {
+						bytes, _ := json.Marshal(step["action_params"])
+						_ = json.Unmarshal(bytes, &params)
+					}
+				}
+
+				contextInfo := params["context"].(string)
+				goal := params["goal"].(string) + "Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
+				finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
 
 				results = append(results, map[string]interface{}{
 					"step_index":    stepIndex,
@@ -631,7 +642,7 @@ func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
 	return string(b)
 }
 
-func (a *BaseAgent) thinkAloud(contextInfo, goal string) string {
+func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal string) string {
 	a.stepCh <- map[string]interface{}{
 		"message": "Starting internal thought process",
 		"context": contextInfo,
@@ -640,19 +651,27 @@ func (a *BaseAgent) thinkAloud(contextInfo, goal string) string {
 
 	systemPrompt := fmt.Sprintf(`
         You are Astra's internal reasoning module.
-        Before taking a real-world action, you think carefully about what might happen.
+        Before taking a real-world action, you think carefully about what might happen, how to do this action.
+
         Your goal is to reason step-by-step, stream your thought process,
         and finally summarize your decision in one paragraph.
 
         Context: %s
         Goal: %s
+		Thoughtful Mind map - %s
+		Execution on that mind map with results - %s
 
         Behavior:
         - Think out loud.
         - Stream thoughts one by one.
         - Conclude with "FINAL THOUGHT:" followed by your summary.
         - Do not produce JSON, just human-readable reasoning.
-    `, contextInfo, goal)
+    `,
+		contextInfo,
+		goal,
+		jsonutils.ToJSON(a.RoughPlan),
+		jsonutils.ToJSON(results),
+	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
 	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)

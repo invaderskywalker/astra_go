@@ -25,10 +25,8 @@ type ActionSpec struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Details     string      `json:"details"`
-	Params      interface{} `json:"params"`   // Struct type for parameters
-	Returns     interface{} `json:"returns"`  // Struct type for return
-	Examples    []string    `json:"examples"` // Usage examples (JSON or text)
-	Fn          interface{} `json:"-"`        // Actual function (not serialized)
+	Params      interface{} `json:"params"` // Struct type for parameters
+	Fn          interface{} `json:"-"`      // Actual function (not serialized)
 }
 
 // NewDataActions initializes the DataActions registry.
@@ -205,54 +203,44 @@ func NewDataActions(db *gorm.DB) *DataActions {
 
 		`,
 		Params: ApplyCodeEditsParams{},
-		Examples: []string{
-			``,
-		},
-		Fn: a.applyCodeEdits,
+		Fn:     a.applyCodeEdits,
 	})
 
 	a.register(ActionSpec{
 		Name:        "fetch_file_structure_in_this_repo",
 		Description: "Fetches the file and folder structure of the current repository using the system `tree` command.",
-		Params:      FetchFileStructureParams{},
-		Examples: []string{
-			`{
+		Details: `Usage Exampole: {
 				"path": ".",
 				"ignore_dirs": [".git", ".vscode", "logs"]
-			}`,
-		},
-		Fn: a.FetchFileStructureInRepo,
+			} `,
+		Params: FetchFileStructureParams{},
+		Fn:     a.FetchFileStructureInRepo,
 	})
 
 	a.register(ActionSpec{
 		Name:        "ask_follow_up_questions_to_user",
-		Description: "Takes an array of questions and returns a structured list with placeholder answers. Can be extended to use LLM reasoning later.",
-		Params:      AskFollowUpQuestionsParams{},
-		// Returns:     AskFollowUpQuestionsResult{},
-		Examples: []string{
-			`{
+		Description: "This is created to initiate asking questions to user.",
+		Details: `Usage Example: {
 				"questions": [
 					"Q1",
 					"Q2",
 				]
 			}`,
-		},
-		Fn: a.AskFollowUpQuestions,
+		Params: AskFollowUpQuestionsParams{},
+		Fn:     a.AskFollowUpQuestions,
 	})
 
 	a.register(ActionSpec{
 		Name:        "read_files_in_this_repo",
 		Description: "Reads the content of multiple files from the current repository safely.",
-		Params:      ReadFilesParams{},
-		Examples: []string{
-			`{
+		Details: `Usage example- {
 				"paths": [
 					"astra/agents/actions/actions.go",
 					"astra/agents/core/agent.go"
 				]
 			}`,
-		},
-		Fn: a.ReadFilesInRepo,
+		Params: ReadFilesParams{},
+		Fn:     a.ReadFilesInRepo,
 	})
 
 	a.register(ActionSpec{
@@ -295,10 +283,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 					or data enrichment workflows.
 	`,
 		Params: ScrapeURLsParams{},
-		Examples: []string{
-			``,
-		},
-		Fn: a.ScrapeURLs,
+		Fn:     a.ScrapeURLs,
 	})
 
 	a.register(ActionSpec{
@@ -341,10 +326,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 					and retrieve contextual search snippets for reasoning or LLM grounding.
 	`,
 		Params: QueryWebParams{},
-		Examples: []string{
-			``,
-		},
-		Fn: a.QueryWeb,
+		Fn:     a.QueryWeb,
 	})
 
 	a.register(ActionSpec{
@@ -366,9 +348,8 @@ func NewDataActions(db *gorm.DB) *DataActions {
 				"action_params": {}
 			}
 		`,
-		Params:   struct{}{}, // no params needed
-		Examples: []string{`{}`},
-		Fn:       a.FmtVetBuild,
+		Params: struct{}{}, // no params needed
+		Fn:     a.FmtVetBuild,
 	})
 
 	a.register(ActionSpec{
@@ -389,10 +370,18 @@ func NewDataActions(db *gorm.DB) *DataActions {
 
 			It does not perform any edit or side-effect itself.
 			The action is meant purely for deep reasoning visibility before a risky or uncertain operation.
+
+			Examples::
+			{
+				"action": "think_aloud_reasoning",
+				"action_params": {
+					"context": "",
+					"goal": ""
+				}
+			}
 		`,
-		Params:   struct{}{}, // no params required, but agent may internally provide context
-		Examples: []string{`{}`},
-		Fn:       nil, // intentionally nil — handled internally in BaseAgent
+		Params: struct{}{}, // no params required, but agent may internally provide context
+		Fn:     nil,        // intentionally nil — handled internally in BaseAgent
 	})
 
 	return a
