@@ -1,0 +1,49 @@
+name: create_learning_knowledge
+description: "Creates a new LearningKnowledge entry for the user. Use when learning a new fact, insight, or concept to be stored in the knowledge base."
+details: |
+  Creates a new structured learning entry for the current user. Typically used to record new facts, code concepts, summaries, or other valuable takeaways linked to code or documentation.
+
+  **When to use:**
+  - When an agent, user, or process discovers something new that should be memorized for future reference.
+
+  **Input Params (JSON):**
+    {
+      "knowledge_type": "code_fact", // e.g. code_fact, concept, procedure
+      "source": "docs/readme.md",
+      "content": "Goroutines are lightweight threads managed by Go runtime.",
+      "tags": ["go", "concurrency"],
+      "metadata": {"section": "Concurrency"}
+    }
+
+  **Output Example:**
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174001",
+      "knowledge_type": "code_fact",
+      "source": "docs/readme.md",
+      "content": "Goroutines are lightweight threads managed by Go runtime.",
+      "tags": ["go", "concurrency"],
+      "metadata": {"section": "Concurrency"},
+      ...other fields (timestamps, user_id, etc.)...
+    }
+params:
+  knowledge_type:
+    type: string
+    description: Type/category for learning (e.g., 'code_fact', 'concept')
+    example: code_fact
+  source:
+    type: string
+    description: Origin of the knowledge (file, url, etc.)
+    example: docs/readme.md
+  content:
+    type: string
+    description: Actual content or summary
+    example: Goroutines are lightweight threads managed by Go runtime.
+  tags:
+    type: array
+    items: string
+    description: Optional tags
+    example: ["go", "concurrency"]
+  metadata:
+    type: object
+    description: Optional structured meta
+    example: {"section": "Concurrency"}

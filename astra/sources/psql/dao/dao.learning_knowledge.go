@@ -55,12 +55,11 @@ func (dao *LearningKnowledgeDAO) DeleteLearningKnowledge(ctx context.Context, id
 }
 
 // GetLearningKnowledgeByFilters fetches LearningKnowledge items matching arbitrary filters (e.g., {"user_id":, "knowledge_type":, ...}).
-func (dao *LearningKnowledgeDAO) GetLearningKnowledgeByFilters(ctx context.Context, filters map[string]interface{}) ([]models.LearningKnowledge, error) {
+func (dao *LearningKnowledgeDAO) GetLearningKnowledgeByKnowledgeType(ctx context.Context, user_id int, knowledge_type string) ([]models.LearningKnowledge, error) {
 	var knowledge []models.LearningKnowledge
 	db := dao.DB.WithContext(ctx)
-	if len(filters) > 0 {
-		db = db.Where(filters)
-	}
+	db = db.Where("knowledge_type = ?", knowledge_type)
+	db = db.Where("user_id = ?", user_id)
 	err := db.Order("created_at desc").Find(&knowledge).Error
 	if err != nil {
 		return nil, err

@@ -1,0 +1,27 @@
+name: update_learning_knowledge
+description: "Updates an existing LearningKnowledge entry identified by UUID. Use to revise content, change tags, or add more metadata."
+details: |
+  Updates fields for a specific piece of learning knowledge by its unique identifier (UUID). This is useful for correcting mistakes, amending content, or tagging with better metadata.
+
+  **Input Params (JSON):**
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174001",
+      "updates": {
+        "content": "Updated content goes here.",
+        "tags": ["go", "concurrency", "update"]
+      }
+    }
+
+  **Output on success:**
+    {"result": "success"}
+
+  If the id is not found or updates are invalid, returns error.
+params:
+  id:
+    type: string
+    description: UUID of the knowledge object to update
+    example: "123e4567-e89b-12d3-a456-426614174001"
+  updates:
+    type: object
+    description: Field updates (keys are valid LearningKnowledge fields)
+    example: {"content": "Updated content goes here.", "tags": ["go", "concurrency", "update"]}

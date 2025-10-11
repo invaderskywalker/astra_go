@@ -1,0 +1,27 @@
+name: get_all_learning_knowledge_for_user_by_type
+description: "Retrieves LearningKnowledge entries for the user filtered by knowledge_type. Use to access only a specific kind of learned object."
+details: |
+  Lists all knowledge records for the user matching the specified type (e.g. code_fact, mental_model).
+
+  **Input Params (JSON):**
+    {
+      "knowledge_type": "code_fact"
+    }
+
+  **Output Example:**
+    [
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174001",
+        "knowledge_type": "code_fact",
+        "content": "Goroutines are lightweight threads managed by Go runtime.",
+        ...
+      },
+      ...
+    ]
+
+  Returns []LearningKnowledge filtered by the given type value.
+params:
+  knowledge_type:
+    type: string
+    description: Filter value (e.g., 'code_fact')
+    example: code_fact

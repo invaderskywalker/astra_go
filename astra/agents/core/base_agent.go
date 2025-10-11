@@ -55,7 +55,7 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
 		stepCh:      make(chan map[string]interface{}, 10),
 		responseCh:  make(chan string, 10),
-		dataActions: actions.NewDataActions(db),
+		dataActions: actions.NewDataActions(db, userID),
 		chatDAO:     chatDAO,
 	}
 	logging.AppLogger.Info("BaseAgent initialized",

@@ -2,17 +2,22 @@
 package actions
 
 import (
+	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/psql/models"
 	"encoding/json"
 	"fmt"
 	"reflect"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 // DataActions manages a set of actions for database and code manipulation.
 type DataActions struct {
-	actions map[string]ActionSpec
-	db      *gorm.DB
+	actions     map[string]ActionSpec
+	db          *gorm.DB
+	UserID      int
+	learningDao *dao.LearningKnowledgeDAO
 }
 
 type ActionSummary struct {
@@ -30,36 +35,14 @@ type ActionSpec struct {
 }
 
 // NewDataActions initializes the DataActions registry.
-func NewDataActions(db *gorm.DB) *DataActions {
-
+func NewDataActions(db *gorm.DB, userId int) *DataActions {
+	learningDao := dao.NewLearningKnowledgeDAO(db)
 	a := &DataActions{
-		actions: make(map[string]ActionSpec),
-		db:      db,
+		actions:     make(map[string]ActionSpec),
+		db:          db,
+		UserID:      userId,
+		learningDao: learningDao,
 	}
-
-	a.register(ActionSpec{
-		Name:        "create_learning_knowledge",
-		Description: "Creates a new LearningKnowledge entry (user knowledge artifact, with type, blob, applicable scope, related experiences).",
-		Details:     `Creates a LearningKnowledge artifact for a user, to be used for learning memory, curriculum knowledge, etc.`,
-		Params:      CreateLearningKnowledgeParams{},
-		Fn:          a.CreateLearningKnowledge,
-	})
-
-	a.register(ActionSpec{
-		Name:        "update_learning_knowledge",
-		Description: "Updates an existing LearningKnowledge entry by ID.",
-		Details:     `Updates the selected fields of an existing knowledge artifact by ID.`,
-		Params:      UpdateLearningKnowledgeParams{},
-		Fn:          a.UpdateLearningKnowledge,
-	})
-
-	a.register(ActionSpec{
-		Name:        "fetch_learning_knowledge",
-		Description: "Fetches LearningKnowledge artifacts by ID, UserID, optionally with limit.",
-		Details:     `Retrieves knowledge artifacts by UUID or user, supporting pagination/limits; results ordered by created_at desc.`,
-		Params:      FetchLearningKnowledgeParams{},
-		Fn:          a.FetchLearningKnowledge,
-	})
 
 	a.register(ActionSpec{
 		Name: "apply_code_edits",
@@ -86,15 +69,30 @@ func NewDataActions(db *gorm.DB) *DataActions {
 			## 🧩 Core Data Structures
 
 					• CodeEdit – represents a single modification:
-						- type: "insert" | "replace" | "create_file" | "delete_file"
-						- file: path to target file (most important to provide)
-						- target: reference line to locate edit
-						- start / end: block boundaries (for multi-line replaces)
-						- replacement: content to replace existing code
-						- content: new content for inserts or new files
+
+					Parameters of function:
+
+					- type: "insert" | "replace" | "create_file" | "delete_file"
+					- file: path to target file (most important to provide)
+					
+					replace---
+						- start / end: block boundaries (for replace) (must have)
+						- replacement: content to replace existing code (must have)
 						- position: "before" | "after" (default "after")
-						- context_before / context_after: lines near target for safe matching
-						- Special targets: "__BOF__" (file start), "__EOF__" (file end)
+						- context_before / context_after: lines near target for safe matching (if multiple places have same start/end block)
+
+					insert----
+						- target: reference line to locate to insert before or after as posiiton says
+						- position: "before" | "after" (default "after")
+						- content: new content for inserts or new files
+						- context_before / context_after: lines near target for safe matching (if multiple places have same target line)
+
+					create_file ---
+						- content
+
+					delete_file ---
+
+					- Special targets: "__BOF__" (file start), "__EOF__" (file end)
 
 			---
 
@@ -406,7 +404,7 @@ func NewDataActions(db *gorm.DB) *DataActions {
 			{
 				"action": "think_aloud_reasoning",
 				"action_params": {
-					"context": "",
+					"context": "", // important ot pass context and goal
 					"goal": ""
 				}
 			}
@@ -415,6 +413,56 @@ func NewDataActions(db *gorm.DB) *DataActions {
 		Fn:     nil,        // intentionally nil — handled internally in BaseAgent
 	})
 
+	// --- Learning Knowledge Actions ---
+	a.register(ActionSpec{
+		Name:        "create_learning_knowledge",
+		Description: "Creates a new LearningKnowledge entry for the user.",
+		Details:     "Creates and stores a new knowledge record in the database. Params: LearningKnowledge struct fields.",
+		Params: struct { /* Use models.LearningKnowledge fields */
+		}{},
+		Fn: func(p struct { /* Use models.LearningKnowledge fields */
+		}) error {
+			lk := models.LearningKnowledge{ /* set from p */ }
+			return CreateLearningKnowledgeAction(&lk, a.learningDao)
+		},
+	})
+	a.register(ActionSpec{
+		Name:        "update_learning_knowledge",
+		Description: "Updates an existing LearningKnowledge entry by ID.",
+		Details:     "Updates fields of an existing knowledge record. Params: id (uuid), updates (map[string]interface{}).",
+		Params: struct {
+			Id      string
+			Updates map[string]interface{}
+		}{},
+		Fn: func(p struct {
+			Id      string
+			Updates map[string]interface{}
+		}) error {
+			parsedID, err := uuid.Parse(p.Id)
+			if err != nil {
+				return err
+			}
+			return UpdateLearningKnowledgeAction(parsedID, p.Updates, a.learningDao)
+		},
+	})
+	a.register(ActionSpec{
+		Name:        "get_all_learning_knowledge_for_user",
+		Description: "Retrieves all LearningKnowledge entries for the user.",
+		Details:     "Returns a list of all LearningKnowledge records for the current user.",
+		Params:      struct{}{},
+		Fn: func(_ struct{}) ([]models.LearningKnowledge, error) {
+			return GetAllLearningKnowledgeForUserAction(a.UserID, a.learningDao)
+		},
+	})
+	a.register(ActionSpec{
+		Name:        "get_all_learning_knowledge_for_user_by_type",
+		Description: "Retrieves LearningKnowledge entries for the user filtered by type.",
+		Details:     "Returns filtered list by knowledge_type. Params: knowledge_type (string).",
+		Params:      struct{ KnowledgeType string }{},
+		Fn: func(p struct{ KnowledgeType string }) ([]models.LearningKnowledge, error) {
+			return GetAllLearningKnowledgeForUserByTypeAction(a.UserID, p.KnowledgeType, a.learningDao)
+		},
+	})
 	return a
 }
 

@@ -3,7 +3,6 @@ package actions
 
 import (
 	"astra/astra/utils/logging"
-	"astra/astra/utils/math"
 	"fmt"
 	"os"
 	"os/exec"
@@ -167,16 +166,20 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 	if pos == "" {
 		pos = "after"
 	}
-	var before bool
-	if pos == "before" {
-		before = true
+
+	// Determine context direction
+	var ctxBefore bool
+	if strings.TrimSpace(edit.ContextBefore) != "" {
+		ctxBefore = true
+	} else if strings.TrimSpace(edit.ContextAfter) != "" {
+		ctxBefore = false
 	} else {
-		before = false
+		ctxBefore = (pos == "before")
 	}
 
-	fmt.Println("debug ", edit.Start != "", edit.End != "")
+	fmt.Println("debug handleReplace ", ctxBefore, edit.Start != "", edit.End != "")
 
-	// --- 🧩 Multiline region replace mode ---
+	// --- 🧩 Multiline region replace mode (unchanged) ---
 	if edit.Start != "" && edit.End != "" {
 		startIdx := a.findLineIndex(lines, edit.Start, edit.ContextBefore, true)
 		if startIdx == -1 {
@@ -184,7 +187,6 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 			return lines
 		}
 
-		// find the end marker — trim spaces/tabs before comparing
 		endIdx := -1
 		for i := startIdx + 1; i < len(lines); i++ {
 			line := strings.TrimSpace(lines[i])
@@ -202,16 +204,32 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 		return append(lines[:startIdx], append(replacement, lines[endIdx+1:]...)...)
 	}
 
-	fmt.Println("debug 2 ", edit.Target, edit.ContextBefore)
+	// contextToUse := ""
+	// if ctxBefore && strings.TrimSpace(edit.ContextBefore) != "" {
+	// 	contextToUse = edit.ContextBefore
+	// } else if !ctxBefore && strings.TrimSpace(edit.ContextAfter) != "" {
+	// 	contextToUse = edit.ContextAfter
+	// }
+	return lines
 
-	// --- 🧩 Single-line replace fallback ---
-	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, before)
-	if idx == -1 {
-		fmt.Println("⚠️  replace target not found:", edit.Target)
-		return lines
-	}
+	// // Find target line
+	// idx := a.findLineIndex(lines, edit.Target, contextToUse, ctxBefore)
+	// fmt.Println("debug -- line number --- ", idx)
+	// if idx == -1 {
+	// 	// If target exists only when the file is viewed as a single string (multi-line signature),
+	// 	// attempt a safe fallback: replace the first occurrence in the joined text.
+	// 	joined := strings.Join(lines, "\n")
+	// 	if strings.Contains(joined, edit.Target) {
+	// 		fmt.Println("⚠️ found target only in combined text (multi-line match) — performing fallback replacement")
+	// 		newJoined := strings.Replace(joined, edit.Target, strings.Join(replacement, "\n"), 1)
+	// 		return strings.Split(newJoined, "\n")
+	// 	}
 
-	return append(append(lines[:idx], replacement...), lines[idx+1:]...)
+	// 	fmt.Println("⚠️ target not found at all:", edit.Target)
+	// 	return lines
+	// }
+
+	// return append(append(lines[:idx], replacement...), lines[idx+1:]...)
 }
 
 func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
@@ -220,11 +238,13 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 	if pos == "" {
 		pos = "after"
 	}
-	var before bool
-	if pos == "before" {
-		before = true
+	var ctxBefore bool
+	if strings.TrimSpace(edit.ContextBefore) != "" {
+		ctxBefore = true
+	} else if strings.TrimSpace(edit.ContextAfter) != "" {
+		ctxBefore = false
 	} else {
-		before = false
+		ctxBefore = (pos == "before")
 	}
 
 	// 🚀 Special markers for file start and end
@@ -235,7 +255,7 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 		return append(lines, content...)
 	}
 
-	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, before)
+	idx := a.findLineIndex(lines, edit.Target, edit.ContextBefore, ctxBefore)
 	if idx == -1 {
 		fmt.Println("⚠️  insert target not found:", edit.Target)
 		return lines
@@ -251,18 +271,21 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 func (a *DataActions) findLineIndex(lines []string, target, context string, before bool) int {
 	window := 200
 	for i, line := range lines {
-		// fmt.Println(" ---> ", safeLineMatch(line, target), line, i, before)
 		if safeLineMatch(line, target) {
+			fmt.Print("matched but now ", before, i,
+				a.hasContextInRange(lines, i, window, context, true),
+				a.hasContextInRange(lines, i, window, context, false))
+
 			if context == "" {
 				fmt.Println(" ---> 1")
 				return i
 			}
-			if before && a.hasContextInRange(lines, math.Max(0, i-window), window, context) {
-				fmt.Println(" ---> 2")
+			if before && a.hasContextInRange(lines, i, window, context, true) {
+				fmt.Println(" ---> 2 (context before)")
 				return i
 			}
-			if !before && a.hasContextInRange(lines, i+1, window, context) {
-				fmt.Println(" ---> 3")
+			if !before && a.hasContextInRange(lines, i, window, context, false) {
+				fmt.Println(" ---> 3 (context after)")
 				return i
 			}
 		}
@@ -271,24 +294,48 @@ func (a *DataActions) findLineIndex(lines []string, target, context string, befo
 }
 
 func safeLineMatch(line, target string) bool {
-	line = strings.ToLower(strings.TrimSpace(strings.Split(line, "//")[0]))
-	target = strings.ToLower(strings.TrimSpace(target))
+	normalize := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.ReplaceAll(s, "\t", " ")
+		s = strings.ReplaceAll(s, "`", "")
+		s = strings.Split(s, "//")[0] // drop comments
+		s = strings.TrimSpace(s)
+		s = strings.Join(strings.Fields(s), " ")
+		return s
+	}
 
-	// normalize both
-	line = strings.ReplaceAll(line, "`", "")
-	target = strings.ReplaceAll(target, "`", "")
+	lineNorm := normalize(line)
+	targetNorm := normalize(target)
 
-	// tolerate any whitespace mismatch
-	line = strings.Join(strings.Fields(line), " ")
-	target = strings.Join(strings.Fields(target), " ")
-
-	return strings.Contains(line, target)
+	// Strict mode: line must either start with target or be equal
+	match := lineNorm == targetNorm || strings.HasPrefix(lineNorm, targetNorm+" ")
+	if match {
+		fmt.Printf("✅ normalized strict match: [%s] in [%s]\n", targetNorm, line)
+	}
+	return match
 }
 
-func (a *DataActions) hasContextInRange(lines []string, start, window int, context string) bool {
-	for i := start; i < math.Min(len(lines), start+window); i++ {
-		if strings.Contains(lines[i], context) {
-			return true
+func (a *DataActions) hasContextInRange(lines []string, start int, window int, context string, searchUp bool) bool {
+	clean := strings.ToLower(strings.TrimSpace(context))
+	fmt.Println("\nclean - ", searchUp, clean)
+
+	if clean == "" {
+		return false
+	}
+
+	if searchUp {
+		// search backwards from the line *before* start
+		for i := start - 1; i >= 0 && i >= start-window; i-- {
+			if strings.Contains(strings.ToLower(lines[i]), clean) {
+				return true
+			}
+		}
+	} else {
+		// search forward from the line *after* start
+		for i := start + 1; i < len(lines) && i <= start+window; i++ {
+			if strings.Contains(strings.ToLower(lines[i]), clean) {
+				return true
+			}
 		}
 	}
 	return false

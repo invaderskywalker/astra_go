@@ -1,0 +1,21 @@
+name: get_all_learning_knowledge_for_user
+description: "Retrieves all LearningKnowledge entries for the user. Use to list the full knowledge base for this user."
+details: |
+  Fetches all structured learning/knowledge records belonging to the current user.
+
+  **Input Params (JSON):**
+    {}
+
+  **Output Example:**
+    [
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174001",
+        "knowledge_type": "code_fact",
+        "content": "Goroutines are lightweight threads managed by Go runtime.",
+        ...all fields...
+      },
+      ...more entries...
+    ]
+
+  Returns []LearningKnowledge objects (see schema/models). Useful for knowledge mining, navigation, and UI.
+params: {}

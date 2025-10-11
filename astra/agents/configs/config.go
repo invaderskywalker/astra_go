@@ -3,6 +3,7 @@ package configs
 import (
 	"astra/astra/utils/logging"
 	"os"
+	"path/filepath"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -42,7 +43,7 @@ type AgentConfig struct {
 // ---------- LOADER ----------
 
 func LoadConfig() *AgentConfig {
-	data, err := os.ReadFile("astra/agents/configs/astra.yaml")
+	data, err := os.ReadFile("astra/agents/configs/agents/astra.yaml")
 	if err != nil {
 		logging.ErrorLogger.Error("Failed to read config YAML", zap.Error(err))
 		return &AgentConfig{}
@@ -55,4 +56,39 @@ func LoadConfig() *AgentConfig {
 	}
 
 	return cfg
+}
+
+// ActionYAMLConfig for loading description/details from YAML
+type ActionYAMLConfig struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Details     string `yaml:"details"`
+}
+
+// loadLearningActionYAML loads a specific YAML config by filename
+func loadLearningActionYAML(filename string) (*ActionYAMLConfig, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	var cfg ActionYAMLConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func LoadActionsYAMLInDir(dir string) (map[string]*ActionYAMLConfig, error) {
+	result := make(map[string]*ActionYAMLConfig)
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		cfg, err := loadLearningActionYAML(f)
+		if err == nil && cfg.Name != "" {
+			result[cfg.Name] = cfg
+		}
+	}
+	return result, nil
 }

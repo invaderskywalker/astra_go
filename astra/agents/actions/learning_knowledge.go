@@ -1,104 +1,29 @@
 package actions
 
 import (
+	"astra/astra/sources/psql/dao"
 	"astra/astra/sources/psql/models"
-	"errors"
+	"context"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
-// Params for creating a LearningKnowledge record
-// All fields except ID, CreatedAt are required.
-type CreateLearningKnowledgeParams struct {
-	UserID        int    `json:"user_id"`
-	KnowledgeType string `json:"knowledge_type"`
-	KnowledgeBlob string `json:"knowledge_blob"`
+// CreateLearningKnowledgeAction creates a new LearningKnowledge entry for a user.
+func CreateLearningKnowledgeAction(lk *models.LearningKnowledge, lkDao *dao.LearningKnowledgeDAO) error {
+	return lkDao.CreateLearningKnowledge(context.Background(), lk)
 }
 
-type UpdateLearningKnowledgeParams struct {
-	ID            string `json:"id"` // uuid string
-	KnowledgeType string `json:"knowledge_type"`
-	KnowledgeBlob string `json:"knowledge_blob"`
+// UpdateLearningKnowledgeAction updates an existing LearningKnowledge entry by id.
+func UpdateLearningKnowledgeAction(id uuid.UUID, updates map[string]interface{}, lkDao *dao.LearningKnowledgeDAO) error {
+	return lkDao.UpdateLearningKnowledge(context.Background(), id, updates)
 }
 
-type FetchLearningKnowledgeParams struct {
-	ID     string `json:"id,omitempty"` // uuid string, optional
-	UserID int    `json:"user_id,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+// GetAllLearningKnowledgeForUserAction retrieves all LearningKnowledge entries for a user.
+func GetAllLearningKnowledgeForUserAction(userID int, lkDao *dao.LearningKnowledgeDAO) ([]models.LearningKnowledge, error) {
+	return lkDao.GetAllLearningKnowledgeByUser(context.Background(), userID)
 }
 
-type LearningKnowledgeResult struct {
-	LearningKnowledge models.LearningKnowledge `json:"learning_knowledge"`
-}
-type LearningKnowledgeListResult struct {
-	Results []models.LearningKnowledge `json:"results"`
-}
-
-// CreateLearningKnowledge stores a new LearningKnowledge entry
-type DataActionsWithDB interface {
-	GetDB() *gorm.DB
-}
-
-func (a *DataActions) CreateLearningKnowledge(params CreateLearningKnowledgeParams) (LearningKnowledgeResult, error) {
-	db := a.db
-	lk := models.LearningKnowledge{
-		UserID:        params.UserID,
-		KnowledgeType: params.KnowledgeType,
-		KnowledgeBlob: params.KnowledgeBlob,
-	}
-	if err := db.Create(&lk).Error; err != nil {
-		return LearningKnowledgeResult{}, err
-	}
-	return LearningKnowledgeResult{LearningKnowledge: lk}, nil
-}
-
-func (a *DataActions) UpdateLearningKnowledge(params UpdateLearningKnowledgeParams) (LearningKnowledgeResult, error) {
-	db := a.db
-	var lk models.LearningKnowledge
-	id, err := parseUUIDString(params.ID)
-	if err != nil {
-		return LearningKnowledgeResult{}, err
-	}
-	if err := db.First(&lk, "id = ?", id).Error; err != nil {
-		return LearningKnowledgeResult{}, err
-	}
-	lk.KnowledgeType = params.KnowledgeType
-	lk.KnowledgeBlob = params.KnowledgeBlob
-	if err := db.Save(&lk).Error; err != nil {
-		return LearningKnowledgeResult{}, err
-	}
-	return LearningKnowledgeResult{LearningKnowledge: lk}, nil
-}
-
-func (a *DataActions) FetchLearningKnowledge(params FetchLearningKnowledgeParams) (LearningKnowledgeListResult, error) {
-	db := a.db
-	var results []models.LearningKnowledge
-	q := db.Model(&models.LearningKnowledge{})
-	if params.ID != "" {
-		id, err := parseUUIDString(params.ID)
-		if err != nil {
-			return LearningKnowledgeListResult{}, err
-		}
-		q = q.Where("id = ?", id)
-	}
-	if params.UserID != 0 {
-		q = q.Where("user_id = ?", params.UserID)
-	}
-	if params.Limit > 0 {
-		q = q.Limit(params.Limit)
-	}
-	if err := q.Order("created_at desc").Find(&results).Error; err != nil {
-		return LearningKnowledgeListResult{}, err
-	}
-	return LearningKnowledgeListResult{Results: results}, nil
-}
-
-// Utility - parse uuid from string
-func parseUUIDString(id string) (uuid.UUID, error) {
-	uid, err := uuid.Parse(id)
-	if err != nil {
-		return uuid.UUID{}, errors.New("invalid UUID: " + id)
-	}
-	return uid, nil
+// GetAllLearningKnowledgeForUserByTypeAction retrieves LearningKnowledge entries by user and knowledge_type.
+func GetAllLearningKnowledgeForUserByTypeAction(userID int, knowledgeType string, lkDao *dao.LearningKnowledgeDAO) ([]models.LearningKnowledge, error) {
+	return lkDao.GetLearningKnowledgeByKnowledgeType(context.Background(), userID, knowledgeType)
 }

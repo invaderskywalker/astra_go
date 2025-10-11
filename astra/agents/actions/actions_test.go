@@ -17,7 +17,7 @@ func setupTestEnv(t *testing.T) *DataActions {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	return NewDataActions(db)
+	return NewDataActions(db, 1)
 }
 
 // --- Scraping Actions Test: ScrapeURLs ---
