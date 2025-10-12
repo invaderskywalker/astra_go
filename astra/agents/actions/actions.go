@@ -301,6 +301,14 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 	})
 
 	a.register(ActionSpec{
+		Name:        "pwd",
+		Description: "Fetch current working directory",
+		Details:     ``,
+		Params:      struct{}{},
+		Fn:          a.GetPWD,
+	})
+
+	a.register(ActionSpec{
 		Name:        "think_aloud_reasoning",
 		Description: "Use this when you are about to make some important changes, before performing risky actions such as code edits or critical logic updates, because correct reasoning is really important.",
 		Details: `

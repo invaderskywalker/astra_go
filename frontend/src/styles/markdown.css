@@ -1,0 +1,409 @@
+
+
+.markdown-preview table {
+  border-radius: 5px;
+  padding: 5px;
+  margin: 10px;
+}
+
+.markdown-preview * {
+  font-family: 'Poppins';
+}
+
+.markdown-preview p {
+  margin: 2px 0 !important;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin: 0 !important;
+  padding-left: 20px; 
+}
+
+.markdown-preview li {
+  margin: 2px 0 !important; 
+}
+
+* madkdown render css */
+.wmde-markdown code,
+table {
+  font-family: Poppins;
+}
+
+
+.wmde-markdown code::-webkit-scrollbar {
+  height: 5px;
+  display: block;
+}
+
+.wmde-markdown {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.wmde-markdown p {
+  padding: 10px 0px;
+  font-family:
+    Poppins,
+    Consolas,
+    Courier New,
+    monospace !important;
+
+  font-size: 14px;
+}
+
+.common_agent_wrap {
+  max-width: var(--para-max-width, 100%) !important;
+  word-wrap: break-word;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.wmde-markdown {
+  max-width: var(--para-max-width, 100%) !important;
+  word-wrap: break-word;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.wmde-markdown pre {
+  overflow-x: auto;
+  /* Enable horizontal scrolling */
+  white-space: pre-wrap;
+  /* Break long lines */
+  word-wrap: break-word;
+  /* Ensure long words wrap properly */
+  max-width: 100%;
+  /* Ensure the pre block doesn't exceed the parent's width */
+  box-sizing: border-box;
+  /* Include padding in width calculation */
+  background-color: rgb(0, 0, 0);
+}
+
+.wmde-markdown h2 {
+  font-weight: 600;
+  padding-bottom: 0.3em;
+  font-size: 1.5em;
+  border-bottom: 1px solid #dfdfdf;
+}
+
+.wmde-markdown p {
+  font-size: 16px;
+}
+
+.wmde-markdown b,
+.wmde-markdown strong {
+  font-weight: 600;
+  padding-bottom: 0.3em;
+  font-size: 1em;
+}
+
+.wmde-markdown p,
+.wmde-markdown blockquote,
+.wmde-markdown ul,
+.wmde-markdown ol,
+.wmde-markdown dl,
+.wmde-markdown table,
+.wmde-markdown pre,
+.wmde-markdown details {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+
+.wmde-markdown h1 {
+
+  border-bottom: 1px solid #bebcbc;
+}
+
+.wmde-markdown ul,
+.wmde-markdown ol {
+  margin-top: 0px;
+  margin-bottom: 5px;
+  /* padding-left: 1em; */
+  padding-left: 30px;
+}
+
+.wmde-markdown hr {
+  display: none;
+}
+
+
+
+.wmde-markdown pre>code {
+  padding: 16px;
+  overflow: auto;
+  display: block;
+  background-color: rgb(231 248 248);
+}
+
+.wmde-markdown ::selection {
+  background: rgb(212, 212, 242);
+  /* color: white; */
+}
+
+.wmde-markdown ::-moz-selection {
+  background: rgb(200, 200, 229);
+  /* color: white; */
+}
+
+
+.wmde-markdown code {
+  max-width: var(--code-max-width, 700px) !important;
+  overflow-x: auto;
+  /* margin-left: -10px; */
+  /* background-color: rgb(206, 201, 201); */
+  color: rgb(6, 6, 6);
+}
+
+.wmde-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--table-max-width, 100%);
+  margin: 16px 0;
+  font-size: 15px;
+  overflow: hidden; 
+}
+
+.wmde-markdown table th {
+  background: #f9f9f9 !important;
+  color: #333 !important;
+  text-align: left;
+  padding: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 2px solid #d0d0d0;
+  border-left: none !important;
+  border-right: none !important;
+  white-space: nowrap;
+}
+
+/* Table cells */
+.wmde-markdown table td {
+  padding: 12px;
+  border-bottom: 1px solid #333;
+  background-color: #ffffff;
+  color: #333;
+  border-left: none !important;
+  border-right: none !important;
+}
+
+.wmde-markdown table tr:nth-child(even) td {
+  background-color: #f9f9f9;
+}
+
+/* Hover effect */
+.wmde-markdown table tr:hover td {
+  background-color: #f1f7ff;
+  transition: background-color 0.2s ease;
+}
+
+/* Outer table container */
+.markdown-preview .tc-table {
+  display: table;
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+  font-size: 15px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* Rows */
+.markdown-preview .tc-table__row {
+  display: table-row;
+}
+
+/* Cells */
+.markdown-preview .tc-table__cell {
+  display: table-cell;
+  padding: 12px;
+  border-bottom: 1px solid #d0d0d0;
+  border-right: 1px solid #d0d0d0;
+  background-color: #fff;
+  color: #333;
+  min-width: 120px;
+  text-align: left;
+}
+
+/* Remove last column border */
+.markdown-preview .tc-table__cell:last-child {
+  border-right: none;
+}
+
+/* Header row (first row) */
+.markdown-preview .tc-table__row:first-child .tc-table__cell {
+  background: #f9f9f9;
+  font-weight: 600;
+  border-bottom: 2px solid #d0d0d0;
+}
+
+/* Zebra striping */
+.markdown-preview .tc-table__row:nth-child(even) .tc-table__cell {
+  background-color: #f9f9f9;
+}
+
+/* Hover effect */
+.markdown-preview .tc-table__row:hover .tc-table__cell {
+  background-color: #f1f7ff;
+  transition: background-color 0.2s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+
+  .wmde-markdown table,
+  .wmde-markdown-var table {
+    --color-canvas-default: transparent;
+    --color-canvas-subtle: rgb(255, 255, 255);
+  }
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td {
+  text-align: left;
+  min-width: 200px;
+  padding: 10px;
+  font-size: 16px;
+}
+
+/* Keep the first column left-aligned */
+.wmde-markdown table th:first-child,
+.wmde-markdown table td:first-child {
+  text-align: left;
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td {
+  min-width: 200px;
+}
+
+.wmde-markdown table {
+  /* max-width: var(--table-max-width, 700px) !important; */
+  overflow-x: auto;
+  margin-left: -10px;
+}
+
+.wmde-markdown table::-webkit-scrollbar {
+  height: 5px;
+  display: block;
+}
+
+.avtar_htss-25 {
+  height: 25px !important;
+  width: 25px !important;
+}
+
+/* madkdown render css */
+.wmde-markdown code,
+table {
+  font-family: Poppins;
+}
+
+.wmde-markdown code::-webkit-scrollbar {
+  height: 5px;
+  display: block;
+}
+
+
+.wmde-markdown table th {
+  background-color: #6f6f6f;
+  /* Dark color for the header */
+  color: white;
+  /* Optional: text color for better contrast */
+  padding: 10px;
+  /* Optional: adjust padding for a nicer look */
+}
+
+@media (prefers-color-scheme: dark) {
+
+  .wmde-markdown table,
+  .wmde-markdown-var table {
+    --color-canvas-default: transparent;
+    --color-canvas-subtle: rgb(255, 255, 255);
+  }
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td {
+  text-align: left;
+  /* Center align by default */
+  min-width: 200px;
+  padding: 10px;
+  /* Optional: adjust padding */
+}
+
+/* Keep the first column left-aligned */
+.wmde-markdown table th:first-child,
+.wmde-markdown table td:first-child {
+  text-align: left;
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td {
+  min-width: 80px;
+}
+
+.wmde-markdown table {
+  max-width: var(--table-max-width, 700px) !important;
+  overflow-x: auto;
+  margin-left: -10px;
+}
+
+.wmde-markdown table:focus {
+  outline: none;
+  outline-offset: 0px;
+}
+
+.scrollable-table-container {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.wmde-markdown table::-webkit-scrollbar {
+  height: 5px;
+  display: block;
+}
+
+.portfolio_view_tabs {
+  color: #141932b2 !important;
+  /* font-size: 14px !important; */
+  line-height: 20px !important;
+  /* font-weight: 500 !important; */
+}
+
+.markdown-buttons {
+  padding: 8px;
+  margin: 8px;
+  border-radius: 24px;
+  background-color: #ffffff;
+  color: #333333;
+  border: 2px solid rgba(251, 183, 95, 0.25);
+  transition: all 0.3s ease;
+  /* Smooth transition for hover effects */
+  cursor: pointer;
+  font-family:
+    Poppins,
+    Consolas,
+    Courier New,
+    monospace !important;
+
+  font-size: 14px;
+  font-weight: 400;
+  position: relative;
+  /* min-height: 50px; */
+  min-width: 300px;
+
+  word-wrap: break-word;
+  white-space: normal;
+  overflow-wrap: break-word;
+
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  /* box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.2); */
+}

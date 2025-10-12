@@ -3,6 +3,7 @@ package actions
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,4 +134,16 @@ func (a *DataActions) ReadFilesInRepo(params ReadFilesParams) ReadFilesResult {
 	}
 
 	return ReadFilesResult{Results: results}
+}
+
+func (a *DataActions) GetPWD() (map[string]interface{}, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Error getting current directory: %v", err)
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"output":  dir,
+	}, nil
 }
