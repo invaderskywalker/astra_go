@@ -1,10 +1,3 @@
-// ---
-// Enhancement: Support 'replace_file' edit type
-//
-// 'replace_file': Atomically replaces the entire file with provided content, overwriting the previous content.
-// Example CodeEdit: {"type": "replace_file", "file": "foo.go", "replacement": "all new contents" }
-// This is atomic and skips all target/search logic. Use only when a whole-file rewrite is intended.
-// ---
 // Package actions provides functionality for managing database and code manipulation actions.
 package actions
 
@@ -217,33 +210,7 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 		fmt.Printf("🧠 Replacing lines %d–%d in %s\n", startIdx, endIdx, edit.File)
 		return append(lines[:startIdx], append(replacement, lines[endIdx+1:]...)...)
 	}
-
-	// contextToUse := ""
-	// if ctxBefore && strings.TrimSpace(edit.ContextBefore) != "" {
-	// 	contextToUse = edit.ContextBefore
-	// } else if !ctxBefore && strings.TrimSpace(edit.ContextAfter) != "" {
-	// 	contextToUse = edit.ContextAfter
-	// }
 	return lines
-
-	// // Find target line
-	// idx := a.findLineIndex(lines, edit.Target, contextToUse, ctxBefore)
-	// fmt.Println("debug -- line number --- ", idx)
-	// if idx == -1 {
-	// 	// If target exists only when the file is viewed as a single string (multi-line signature),
-	// 	// attempt a safe fallback: replace the first occurrence in the joined text.
-	// 	joined := strings.Join(lines, "\n")
-	// 	if strings.Contains(joined, edit.Target) {
-	// 		fmt.Println("⚠️ found target only in combined text (multi-line match) — performing fallback replacement")
-	// 		newJoined := strings.Replace(joined, edit.Target, strings.Join(replacement, "\n"), 1)
-	// 		return strings.Split(newJoined, "\n")
-	// 	}
-
-	// 	fmt.Println("⚠️ target not found at all:", edit.Target)
-	// 	return lines
-	// }
-
-	// return append(append(lines[:idx], replacement...), lines[idx+1:]...)
 }
 
 func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
@@ -284,7 +251,9 @@ func (a *DataActions) handleInsert(lines []string, edit CodeEdit) []string {
 
 func (a *DataActions) findLineIndex(lines []string, target, context string, before bool) int {
 	window := 200
+	fmt.Println("findLineIndex target  ", target)
 	for i, line := range lines {
+		// fmt.Println("match line  ", safeLineMatch(line, target), i, line)
 		if safeLineMatch(line, target) {
 			fmt.Print("matched but now ", before, i,
 				a.hasContextInRange(lines, i, window, context, true),
@@ -308,20 +277,29 @@ func (a *DataActions) findLineIndex(lines []string, target, context string, befo
 }
 
 func safeLineMatch(line, target string) bool {
-	normalize := func(s string) string {
+	normalizeLine := func(s string) string {
 		s = strings.ToLower(s)
 		s = strings.ReplaceAll(s, "\t", " ")
-		s = strings.ReplaceAll(s, "`", "")
-		s = strings.Split(s, "//")[0] // drop comments
+		// drop inline comments for the file line
+		// s = strings.Split(s, "//")[0]
+		s = strings.TrimSpace(s)
+		s = strings.Join(strings.Fields(s), " ")
+		return s
+	}
+	normalizeTarget := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.ReplaceAll(s, "\t", " ")
 		s = strings.TrimSpace(s)
 		s = strings.Join(strings.Fields(s), " ")
 		return s
 	}
 
-	lineNorm := normalize(line)
-	targetNorm := normalize(target)
+	lineNorm := normalizeLine(line)
+	targetNorm := normalizeTarget(target)
 
-	// Strict mode: line must either start with target or be equal
+	if targetNorm == "" {
+		return false
+	}
 	match := lineNorm == targetNorm || strings.HasPrefix(lineNorm, targetNorm+" ")
 	if match {
 		fmt.Printf("✅ normalized strict match: [%s] in [%s]\n", targetNorm, line)
@@ -373,8 +351,10 @@ func (a *DataActions) rollbackFiles(editsByFile map[string][]CodeEdit) {
 
 func (a *DataActions) FmtVetBuild() (map[string]interface{}, error) {
 	cmds := [][]string{
+		{"goimports", "-w", "./"},
 		{"go", "fmt", "./..."},
 		{"go", "vet", "./..."},
+		{"go", "mod", "tidy"},
 		{"go", "build", "./..."},
 	}
 

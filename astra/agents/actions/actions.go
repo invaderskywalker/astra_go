@@ -1,14 +1,14 @@
 // Package actions provides functionality for managing database and code manipulation actions.
+
 package actions
 
 import (
+	"astra/astra/agents/configs"
 	"astra/astra/sources/psql/dao"
-	"astra/astra/sources/psql/models"
 	"encoding/json"
 	"fmt"
 	"reflect"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -87,7 +87,7 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		### replace
 		Update an existing line or block.
 		Fields:
-		  • start / end: block boundaries (for replace) (must have)
+		  • start / end: block boundaries (this is not line number, this is code line be very mindful of this) (for replace) (must have)
 		  • replacement: content to replace existing code (must have)
 		  • position: "before" | "after" (default "after")
 		  • context_before / context_after: lines near target for safe matching (if multiple places have same start/end block)
@@ -332,56 +332,38 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		Fn:     nil,        // intentionally nil — handled internally in BaseAgent
 	})
 
-	// --- Learning Knowledge Actions ---
-	a.register(ActionSpec{
-		Name:        "create_learning_knowledge",
-		Description: "Creates a new LearningKnowledge entry for the user.",
-		Details:     "Creates and stores a new knowledge record in the database. Params: LearningKnowledge struct fields.",
-		Params: struct { /* Use models.LearningKnowledge fields */
-		}{},
-		Fn: func(p struct { /* Use models.LearningKnowledge fields */
-		}) error {
-			lk := models.LearningKnowledge{ /* set from p */ }
-			return CreateLearningKnowledgeAction(&lk, a.learningDao)
-		},
-	})
-	a.register(ActionSpec{
-		Name:        "update_learning_knowledge",
-		Description: "Updates an existing LearningKnowledge entry by ID.",
-		Details:     "Updates fields of an existing knowledge record. Params: id (uuid), updates (map[string]interface{}).",
-		Params: struct {
-			Id      string
-			Updates map[string]interface{}
-		}{},
-		Fn: func(p struct {
-			Id      string
-			Updates map[string]interface{}
-		}) error {
-			parsedID, err := uuid.Parse(p.Id)
-			if err != nil {
-				return err
-			}
-			return UpdateLearningKnowledgeAction(parsedID, p.Updates, a.learningDao)
-		},
-	})
-	a.register(ActionSpec{
-		Name:        "get_all_learning_knowledge_for_user",
-		Description: "Retrieves all LearningKnowledge entries for the user.",
-		Details:     "Returns a list of all LearningKnowledge records for the current user.",
-		Params:      struct{}{},
-		Fn: func(_ struct{}) ([]models.LearningKnowledge, error) {
-			return GetAllLearningKnowledgeForUserAction(a.UserID, a.learningDao)
-		},
-	})
-	a.register(ActionSpec{
-		Name:        "get_all_learning_knowledge_for_user_by_type",
-		Description: "Retrieves LearningKnowledge entries for the user filtered by type.",
-		Details:     "Returns filtered list by knowledge_type. Params: knowledge_type (string).",
-		Params:      struct{ KnowledgeType string }{},
-		Fn: func(p struct{ KnowledgeType string }) ([]models.LearningKnowledge, error) {
-			return GetAllLearningKnowledgeForUserByTypeAction(a.UserID, p.KnowledgeType, a.learningDao)
-		},
-	})
+	// --- Register learning actions from YAML (atomic, robust) ---
+	learningYAMLDir := "astra/agents/configs/actions/learning"
+	learningActionsYAML, err := configs.LoadActionsYAMLInDir(learningYAMLDir)
+	if err != nil {
+		panic("Failed to load learning actions YAML configs: " + err.Error())
+	}
+	// Registration data pairing key, params, and function
+	var learningRegistrations = []struct {
+		key    string
+		params interface{}
+		fn     interface{}
+	}{
+		{"create_learning_knowledge", CreateLearningKnowledgeParams{}, a.CreateLearningKnowledgeAction},
+		// {"update_learning_knowledge", UpdateLearningKnowledgeParams{}, a.UpdateLearningKnowledgeAction},
+		{"get_all_learning_knowledge_for_user", struct{}{}, a.GetAllLearningKnowledgeForUserAction},
+		{"get_all_learning_knowledge_for_user_by_type", GetAllLearningKnowledgeByTypeParams{}, a.GetAllLearningKnowledgeForUserByTypeAction},
+	}
+	for _, reg := range learningRegistrations {
+		yamlCfg, ok := learningActionsYAML[reg.key]
+		if !ok {
+			panic("Missing YAML: " + reg.key)
+		}
+		a.register(ActionSpec{
+			Name:        yamlCfg.Name,
+			Description: yamlCfg.Description,
+			Details:     yamlCfg.Details,
+			Params:      reg.params,
+			Fn:          reg.fn,
+		})
+	}
+	// --- End YAML-driven learning actions registration ---
+
 	return a
 }
 

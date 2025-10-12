@@ -277,6 +277,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		****important*****
 		- Respond ONLY with valid JSON only stick to this format: %s
 		- Any text outside the JSON is considered an error.
+		- Dont keep repeating any action - be sensible, you are not some small time rookie, you are supposed to my JARVIS
 		`,
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
