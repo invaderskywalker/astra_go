@@ -21,7 +21,7 @@ interface ChatProps {
   handleLogout: () => void;
 }
 
-export default function Chat({ token, userId, handleLogout }: ChatProps) {
+export default function Chat({ token, userId }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [intermediateMessages, setIntermediateMessages] = useState<IntermediateMessage[]>([]);
   const [input, setInput] = useState("");
@@ -229,17 +229,17 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
   return (
     <div className="chat-container">
       <header className="chat-header">
-        <div className="chat-header-title">
+        {/* <div className="chat-header-title">
           <i className="fas fa-comment-alt"></i> SimpleChat
-        </div>
+        </div> */}
         <div className="chat-header-options">
           <span className="signal-light" style={{ backgroundColor: isConnected ? "green" : "red" }}></span>
           <button className="connect-btn" onClick={handleConnect} disabled={isConnected}>
             {isConnected ? "Connected" : "Connect"}
           </button>
-          <button className="logout-btn" onClick={handleLogout}>
+          {/* <button className="logout-btn" onClick={handleLogout}>
             Logout
-          </button>
+          </button> */}
           <span>
             <i className="fas fa-cog"></i>
           </span>

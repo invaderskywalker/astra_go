@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type JSX } from "react";
+import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Chat from "./Chat";
 import Login from "./Login";
+import Home from "./Home";
 import './App.css';
-import './styles/markdown.css'
+import './styles/markdown.css';
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
@@ -31,14 +33,42 @@ function App() {
     localStorage.removeItem("userId");
   };
 
+  // Navigation bar component
+  function NavBar() {
+    return (
+      <nav style={{ background: '#282c34', padding: '1rem' }}>
+        <Link to="/" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Home</Link>
+        <Link to="/chat" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Chat</Link>
+        {token && userId && (
+          <button style={{ marginLeft: '1rem' }} onClick={handleLogout}>Logout</button>
+        )}
+      </nav>
+    );
+  }
+
+  // Protected Route wrapper for Chat
+  function ProtectedRoute({ children }: { children: JSX.Element }) {
+    const location = useLocation();
+    if (!token || !userId) {
+      return <Navigate to="/login" state={{ from: location }} replace />;
+    }
+    return children;
+  }
+
   return (
-    <div className="app">
-      {token && userId ? (
-        <Chat token={token} userId={userId} handleLogout={handleLogout} />
-      ) : (
-        <Login onLogin={handleLogin} />
-      )}
-    </div>
+    <Router>
+      <NavBar />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/chat" element={
+          <ProtectedRoute>
+            <Chat token={token!} userId={userId!} handleLogout={handleLogout} />
+          </ProtectedRoute>
+        } />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Router>
   );
 }
 

@@ -31,7 +31,7 @@ func (a *DataActions) FetchFileStructureInRepo(params FetchFileStructureParams) 
 	}
 
 	// Construct ignore pattern for `tree -I`
-	ignorePattern := ""
+	ignorePattern := "venv|node_modules|"
 	if len(params.IgnoreDirs) > 0 {
 		ignorePattern = strings.Join(params.IgnoreDirs, "|")
 	}
