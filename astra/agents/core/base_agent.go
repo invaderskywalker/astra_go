@@ -87,7 +87,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	}()
 
 	// Get lightweight action summaries (name + description) from runtime registry
-	actionSummaries := a.dataActions.ListActionSummaries()
+	actionSummaries := a.dataActions.ListActions()
 
 	// Build the system prompt (inject action summaries)
 	systemPrompt := fmt.Sprintf(`
@@ -100,8 +100,10 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		**Agent Role:** %s  
 		**Chat history** %s
 
-		**Available Actions (name + description):** 
+		**Available Actions (full description with usage instruction):** 
+		<available_actions_with_full_description>
 		%s
+		</available_actions_with_full_description>
 
 		## Decision Process
 			**Description:**  
@@ -233,7 +235,10 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		Context:
 		- Full mind map plan: %s
 		- Previous execution results: %s
-		- Available actions (full spec and details (very important to understand correct)): %s
+		**Available Actions (full description with usage instruction):** 
+		<available_actions_with_full_description>
+		%s
+		</available_actions_with_full_description>
 
 		Task:
 		You are provided with a full mind map of responding 

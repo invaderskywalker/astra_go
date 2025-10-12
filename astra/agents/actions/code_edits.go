@@ -1,3 +1,10 @@
+// ---
+// Enhancement: Support 'replace_file' edit type
+//
+// 'replace_file': Atomically replaces the entire file with provided content, overwriting the previous content.
+// Example CodeEdit: {"type": "replace_file", "file": "foo.go", "replacement": "all new contents" }
+// This is atomic and skips all target/search logic. Use only when a whole-file rewrite is intended.
+// ---
 // Package actions provides functionality for managing database and code manipulation actions.
 package actions
 
@@ -14,7 +21,9 @@ import (
 
 // CodeEdit represents a single code modification operation.
 type CodeEdit struct {
-	Type          string `json:"type"`           // "create_file", "delete_file", "replace", or "insert"
+	Type string `json:"type"` // "create_file", "delete_file", "replace", or "insert"
+	// New edit type - replace_file: replaces the entire file contents in one step
+	// Example: {"type": "replace_file", "file": "foo.go", "replacement": "new contents..." }
 	File          string `json:"file"`           // Absolute or relative file path
 	Target        string `json:"target"`         // Target line or block (optional)
 	Start         string `json:"start"`          // Start of block (optional)
@@ -120,8 +129,7 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	}
 
 	for _, edit := range edits {
-		fmt.Println("→ applying edit:", edit.Type, "target:", edit.Target, "position:", edit.Position)
-
+		fmt.Println("â applying edit:", edit.Type, "target:", edit.Target, "position:", edit.Position)
 		switch edit.Type {
 		case "create_file":
 			a.createFile(edit.File, edit.Content)
@@ -129,6 +137,12 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 			if err := os.Remove(edit.File); err != nil && !os.IsNotExist(err) {
 				logging.AppLogger.Warn("delete_file failed", zap.String("file", edit.File), zap.Error(err))
 			}
+		case "replace_file":
+			// Replace entire file contents with provided replacement
+			if err := os.WriteFile(edit.File, []byte(edit.Replacement), 0644); err != nil {
+				return fmt.Errorf("failed to replace entire file %s: %w", edit.File, err)
+			}
+			lines = strings.Split(edit.Replacement, "\n")
 		case "replace":
 			lines = a.handleReplace(lines, edit)
 		case "insert":

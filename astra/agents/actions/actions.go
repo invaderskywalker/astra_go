@@ -47,79 +47,63 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 	a.register(ActionSpec{
 		Name: "apply_code_edits",
 		Description: `
-			Applies a list of code edits (replace, insert, create_file, delete_file) to source files. 
-			Only to be triggered when code edit is required. 
-		`,
+		Applies intelligent, context-aware code modifications to source files
+		within the Astra repository. Supports:
+		  • insert
+		  • replace
+		  • create_file
+		  • delete_file
+		  • replace_file  ← replaces an entire file atomically.
+		Use only when the agent must perform a real code update, never for text generation.
+	`,
 		Details: `
-			# 🧠 Astra Code Editing Engine
+		# 🧠 Astra Code Editing Engine
 
-			The Astra Code Editing Engine enables intelligent, context-aware code modifications 
-			inside the Astra Agent framework. 
-			It supports operations such as inserting, replacing, creating, and deleting files 
+		The Astra Code Editing Engine enables safe, structured, and context-aware
+		source-code modifications inside the Astra Agent framework.
 
-			---
+		---
 
-			## ⚙️ Core Files
+		## ⚙️ Core Files
+		• Implementation: astra/agents/actions/code_edits.go  
+		• Tests:          astra/agents/actions/code_edits_test.go
 
-					• Implementation: astra/astra/agents/actions/code_edits.go  
-					• Tests: astra/astra/agents/actions/code_edits_test.go  
+		---
 
-			---
+		## 🧩 Core Data Structures
+		Each code edit is represented as a JSON object:
 
-			## 🧩 Core Data Structures
+		- type: "insert" | "replace" | "create_file" | "delete_file" | "replace_file"
+		- file: path to the target file (required)
 
-					• CodeEdit – represents a single modification:
+		### insert
+		Insert new lines before/after a target.
+		Fields:
+		  • target: reference line to locate to insert before or after as posiiton says 
+		  • position: "before" | "after" (default "after")
+		  • content: new content for inserts or new files
+		  • - context_before / context_after: lines near target for safe matching (if multiple places have same target line)
 
-					Parameters of function:
+		### replace
+		Update an existing line or block.
+		Fields:
+		  • start / end: block boundaries (for replace) (must have)
+		  • replacement: content to replace existing code (must have)
+		  • position: "before" | "after" (default "after")
+		  • context_before / context_after: lines near target for safe matching (if multiple places have same start/end block)
 
-					- type: "insert" | "replace" | "create_file" | "delete_file"
-					- file: path to target file (most important to provide)
-					
-					replace---
-						- start / end: block boundaries (for replace) (must have)
-						- replacement: content to replace existing code (must have)
-						- position: "before" | "after" (default "after")
-						- context_before / context_after: lines near target for safe matching (if multiple places have same start/end block)
+		### create_file
+		Create a new file with the given content.
 
-					insert----
-						- target: reference line to locate to insert before or after as posiiton says
-						- position: "before" | "after" (default "after")
-						- content: new content for inserts or new files
-						- context_before / context_after: lines near target for safe matching (if multiple places have same target line)
+		### delete_file
+		Delete a file if it exists.
 
-					create_file ---
-						- content
+		### replace_file  ← **New Ability**
+		Atomically replace the entire contents of a file with the given text.
+		Use when performing large rewrites or regenerating code.
+		Skips all target/search logic and directly overwrites the file.
 
-					delete_file ---
-
-					- Special targets: "__BOF__" (file start), "__EOF__" (file end)
-
-			---
-
-			## 🧠 Execution Flow
-
-					1. Validate Edits
-							Each edit is checked for valid file paths and grouped by file.
-					
-					2. Reasoning
-						What to add, where to add 
-						- like mostly add new functions at the end, 
-						- while replacing multi line use start, end 
-						- and while replacing single line use target
-						- also use context before/ context after to exactly distinguish between similar lines at multiple places
-
-					3. Apply Edits
-							Each edit type is processed individually:
-								- create_file → writes a new file
-								- delete_file → removes file if exists
-								- insert → adds new content before/after a target
-								- replace → swaps a target line or block
-
-					4. Context Matching
-							The engine finds the correct line using target + context hints.
-							It searches nearby lines (window ≈ 25) to avoid false matches.
-
-			---
+		---
 			## Important
 
 			__BOF__ and __EOF__ are also supported for targets
@@ -128,109 +112,44 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 
 			While giving a json output never use backticks. always ouptut proper JSON
 
-			----
+		----
+		Example:
+		{
+			"edits": [
+				{
+					"type": "replace_file",
+					"file": "astra/agents/actions/actions.go",
+					"replacement": "// full new contents of the file\npackage actions\n\n..."
+				}
+			]
+		}
 
-			## 🧪 Example Edit Instructions
+		---
 
-					✅ Replace a Line
-					{
-						"edits": [
-							{
-								"type": "replace",
-								"target": "fmt.Println(\"middle\")", // single line target
-								"context_before": "func DemoFunction(", // a landmark line before this target to clearly identify this target
-								"position": "after", // after this target which is inside this context
-								"replacement": "fmt.Println(\"REPLACED MIDDLE\")",
-								"file": "test_target.go"
-							}
-						]
-					}
+		## 🧠 Execution Flow
+		1. Validate and group edits by file.
+		2. Apply each edit type sequentially:
+		     create_file → new file
+		     delete_file → remove file
+		     replace_file → full overwrite (atomic)
+		     insert / replace → partial modifications
+		3. Run go fmt automatically after edits.
 
-					✅ Replace Multi line
-					{
-						"edits": [
-							{
-								"type": "replace",
-								"start": "some code line",
-								"end": ""
-								"context_before": "func (dao *UserDAO) GetUserByID2(",
-								"replacement": "return &user, fmt.Errorf(\"mock error from GetUserByID2\")",
-								"file": "test_target.go"
-							}
-						]
-					}
+		---
 
-					✅ Insert Inside a Function
-					{
-						"edits": [
-							{
-								"type": "insert",
-								"target": "err := dao.DB.WithContext(ctx).First(&user, id).Error",
-								"context_before": "func (dao *UserDAO) GetUserByID(", // the fn insifde which to make edit
-								"position": "after", // after this target which is inside this context
-								"content": "    fmt.Println(\"DEBUG: Entered GetUserByID\")", // the content to replace with
-								"file": "test_target.go"
-							}
-						]
-					}
+		## 💡 LLM Prompt Guidelines
+		- Preserve indentation exactly.
+		- Never use backticks in JSON output.
+		- Limit edits to the specified region (or whole file for replace_file).
+		- Always provide a valid file path.
+		- For risky edits, call think_aloud_reasoning first.
 
+		---
 
-					✅ Insert at End of File
-					{
-						"edits": [
-							{
-								"type": "insert",
-								"target": "__EOF__",
-								"content": "// APPENDED AT END OF FILE",
-								"file": "test_target.go"
-							}
-						]
-					}
-
-			---
-
-			## 🧠 LLM Prompt Guidelines for Safe Code Editing
-
-				When generating code edit instructions for this action, **follow these mandatory rules**:
-
-				1. **Preserve formatting and indentation exactly.**
-				- Do not add or remove backslashes inside string literals.
-				- Do not escape existing ` + "`\\n` or `\\t`" + ` sequences.
-				- Do not collapse multi-line raw strings or alter backticks.
-
-				2. **Respect raw string literals.**
-				- If you see a back-tick raw string,  
-					keep all internal newlines and tabs exactly as written.
-				- Never replace backticks with double quotes.
-
-				3. **No concatenation unless explicitly required.**
-				- Avoid breaking raw strings into "+" pieces.
-				- Keep long literals intact unless splitting is unavoidable for variable interpolation.
-
-				4. **Edit only the target block.**
-				- Never reindent or reformat the entire file.
-				- Only modify the specified region around the <target> and <context_before>.
-
-				5. **Preserve valid Go syntax.**
-				- Ensure all edits compile.
-				- Do not introduce stray slashes, quotes, or broken multiline strings.
-
-				6. **For simple replacements (single-line changes), prefer direct substitution.**
-				- When both <target> and <replacement> are provided without <start>/<end>, 
-					Astra should replace the single line containing <target> with <replacement>.
-				- Avoid deleting or moving code unless explicitly instructed.
-				- This ensures minimal disruption and avoids structural errors.
-
-
-				---
-
-
-			**In essence:**  
-					The Astra Code Editing Engine gives your AI agents the power to intelligently 
-					edit source code — line-by-line, block-by-block, or function-by-function — 
-					while preserving structure, formatting, and intent.
-
-		`,
+		**In essence:**  
+		The Astra Code Editing Engine gives agents the power to modify or regenerate
+		any part of the codebase—safely, predictably, and under precise control.
+	`,
 		Params: ApplyCodeEditsParams{},
 		Fn:     a.applyCodeEdits,
 	})

@@ -33,11 +33,10 @@ type OutputFormats struct {
 
 // AgentConfig matches astra.yaml
 type AgentConfig struct {
-	AgentName        string                `yaml:"agent_name"`
-	AgentRole        string                `yaml:"agent_role"`
-	DecisionProcess  DecisionProcessConfig `yaml:"decision_process"`
-	AvailableActions []string              `yaml:"available_actions"`
-	OutputFormats    OutputFormats         `yaml:"output_formats"`
+	AgentName       string                `yaml:"agent_name"`
+	AgentRole       string                `yaml:"agent_role"`
+	DecisionProcess DecisionProcessConfig `yaml:"decision_process"`
+	OutputFormats   OutputFormats         `yaml:"output_formats"`
 }
 
 // ---------- LOADER ----------
