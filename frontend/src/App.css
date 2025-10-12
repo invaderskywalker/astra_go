@@ -12,14 +12,21 @@ html {
 
 body {
   display: flex;
-  justify-content: center;
-  align-items: center;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
   min-height: 100vh;
   min-width: 100vw;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
   background-image: var(--body-bg);
   font-family: Helvetica, system-ui, Avenir, Arial, sans-serif;
   color: var(--text-color);
+  overflow: hidden;
+  /* No center alignment, let children expand */
 }
+
 
 :root {
   --body-bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
@@ -37,16 +44,18 @@ body {
 
 .app {
   display: flex;
-  flex-flow: column wrap;
+  flex-direction: column;
   justify-content: space-between;
-  width: 100%;
-  min-width: 90vw;
-  max-width: 90vw;
-  margin: 25px 10px;
-  height: calc(100% - 50px);
+  align-items: center;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
   border: var(--border);
-  border-radius: 5px;
+  border-radius: 0;
   background: var(--msger-bg);
-  box-shadow: 0 15px 15px -5px rgba(0, 0, 0, 0.2);
+  box-shadow: none;
+  min-width: 100vw;
+  min-height: 100vh;
 }
+
 

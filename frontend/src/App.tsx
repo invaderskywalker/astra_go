@@ -36,9 +36,18 @@ function App() {
   // Navigation bar component
   function NavBar() {
     return (
-      <nav style={{ background: '#282c34', padding: '1rem' }}>
-        <Link to="/" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Home</Link>
-        <Link to="/chat" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Chat</Link>
+      <nav style={{ 
+        background: '#282c34', 
+        padding: '1rem', 
+        display: 'flex', 
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div>
+          <Link to="/" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Home</Link>
+          <Link to="/chat" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Chat</Link>
+        </div>
         {token && userId && (
           <button style={{ marginLeft: '1rem' }} onClick={handleLogout}>Logout</button>
         )}
