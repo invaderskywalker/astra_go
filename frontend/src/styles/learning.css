@@ -1,0 +1,100 @@
+.learning-list-container {
+  max-width: 700px;
+  margin: 2rem auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(100,100,150,0.08);
+  padding: 2rem 1.5rem;
+  font-family: 'Poppins', sans-serif;
+  min-height: 350px;
+}
+.learning-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 1.2rem;
+  border-bottom: 1px solid #ececec;
+}
+.learning-list-header h2 {
+  font-weight: 600;
+  font-size: 2em;
+  margin: 0;
+  color: #222447;
+}
+.learning-type-filter {
+  font-size: 1em;
+  border: 1px solid #d0d4e2;
+  border-radius: 6px;
+  padding: 6px 18px 6px 9px;
+  background: #fafbff;
+  color: #2e2e48;
+  outline: none;
+  margin-left: 32px;
+  min-width: 120px;
+}
+.learning-list-loading {
+  text-align: center;
+  color: #666;
+  padding: 16px 0;
+}
+.learning-list-error {
+  color: #ba2636;
+  padding: 10px 0;
+  background: #ffebeb;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+.learning-list-empty {
+  text-align: center;
+  color: #888;
+  margin: 2.5rem 0;
+  font-size: 1.1em;
+}
+.learning-list-items {
+  margin-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.learning-item {
+  border: 1px solid #efefef;
+  border-radius: 7px;
+  background: #f8fbff;
+  padding: 18px 16px;
+  box-shadow: 0px 1px 4px rgba(101,105,130,0.05);
+  transition: box-shadow 0.2s;
+}
+.learning-item:hover {
+  box-shadow: 0 4px 22px rgba(60,80,140,0.13);
+}
+.learning-type-tag {
+  display: inline-block;
+  background: #e9edfa;
+  color: #3d4b99;
+  border-radius: 4px;
+  font-size: 0.96em;
+  font-weight: 500;
+  text-transform: capitalize;
+  padding: 2px 13px;
+  margin-bottom: 10px;
+}
+.learning-content {
+  color: #222;
+  font-size: 1.1em;
+  margin-bottom: 0.3rem;
+  margin-top: 8px;
+  word-break: break-word;
+  white-space: pre-line;
+}
+.learning-meta {
+  font-size: 0.9em;
+  color: #7f7e8e;
+  text-align: right;
+  margin-top: 0.4em;
+}
+.learning-date {
+  font-family: monospace;
+}

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } f
 import Chat from "./Chat";
 import Login from "./Login";
 import Home from "./Home";
+import LearningList from "./LearningList";
 import './App.css';
 import './styles/markdown.css';
 
@@ -33,7 +34,6 @@ function App() {
     localStorage.removeItem("userId");
   };
 
-  // Navigation bar component
   function NavBar() {
     return (
       <nav style={{ 
@@ -42,11 +42,15 @@ function App() {
         display: 'flex', 
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
+        height: '6vh'
       }}>
         <div>
           <Link to="/" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Home</Link>
           <Link to="/chat" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Chat</Link>
+          {token && userId && (
+            <Link to="/learnings" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Learnings</Link>
+          )}
         </div>
         {token && userId && (
           <button style={{ marginLeft: '1rem' }} onClick={handleLogout}>Logout</button>
@@ -55,7 +59,6 @@ function App() {
     );
   }
 
-  // Protected Route wrapper for Chat
   function ProtectedRoute({ children }: { children: JSX.Element }) {
     const location = useLocation();
     if (!token || !userId) {
@@ -73,6 +76,11 @@ function App() {
         <Route path="/chat" element={
           <ProtectedRoute>
             <Chat token={token!} userId={userId!} handleLogout={handleLogout} />
+          </ProtectedRoute>
+        } />
+        <Route path="/learnings" element={
+          <ProtectedRoute>
+            <LearningList token={token!} userId={userId!} />
           </ProtectedRoute>
         } />
         <Route path="*" element={<Navigate to="/" />} />
