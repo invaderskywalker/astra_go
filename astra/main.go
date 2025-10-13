@@ -37,10 +37,12 @@ func main() {
 	userDAO := dao.NewUserDAO(db.DB)
 	chatDAO := dao.NewChatMessageDAO(db.DB)
 	learningDAO := dao.NewLongTermKnowledgeDAO(db.DB)
+	noteDAO := dao.NewNoteDAO(db.DB)
 	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
 	learningCtrl := controllers.NewLongTermController(learningDAO)
+	notesCtrl := controllers.NewNotesController(noteDAO)
 	agentCtrl := controllers.NewAgentsController(db.DB)
 
 	healthCtrl := controllers.NewHealthController()
@@ -80,6 +82,7 @@ func main() {
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
 	r.Mount("/agents", routes.AgentRoutes(agentCtrl, cfg)) // Add agents route
 	r.Mount("/learning", routes.LongTermRoutes(learningCtrl, cfg))
+	r.Mount("/notes", routes.NotesRoutes(notesCtrl, cfg))
 	r.Mount("/test", routes.ScrapeRoutes(scrapeCtrl, cfg))
 
 	r.Mount("/health", routes.HealthRoutes(healthCtrl))

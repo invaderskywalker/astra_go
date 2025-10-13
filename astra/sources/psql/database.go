@@ -44,6 +44,7 @@ func NewDatabase(ctx context.Context, cfg config.Config) (*Database, error) {
 			&models.User{},
 			&models.ChatMessage{},
 			&models.LongTermKnowledge{},
+			&models.Note{},
 		)
 	fmt.Println("err in migrate", err)
 	if err != nil {

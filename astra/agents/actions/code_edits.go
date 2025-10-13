@@ -186,7 +186,7 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 
 	fmt.Println("debug handleReplace ", ctxBefore, edit.Start != "", edit.End != "")
 
-	// --- 🧩 Multiline region replace mode (unchanged) ---
+	// --- Multiline region replace mode (improved) ---
 	if edit.Start != "" && edit.End != "" {
 		startIdx := a.findLineIndex(lines, edit.Start, edit.ContextBefore, true)
 		if startIdx == -1 {
@@ -194,14 +194,42 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 			return lines
 		}
 
+		// Support multi-line end marker: split into parts and search for the sequence
+		endParts := strings.Split(strings.TrimSpace(edit.End), "\n")
+		for i := range endParts {
+			endParts[i] = strings.TrimSpace(endParts[i])
+		}
+
 		endIdx := -1
+		// scan forward, try to match the sequence of endParts
 		for i := startIdx + 1; i < len(lines); i++ {
-			line := strings.TrimSpace(lines[i])
-			if strings.Contains(line, strings.TrimSpace(edit.End)) {
-				endIdx = i
+			// if endParts length is 1, do the old fast path
+			if len(endParts) == 1 {
+				if strings.Contains(strings.TrimSpace(lines[i]), endParts[0]) {
+					endIdx = i
+					break
+				}
+				continue
+			}
+
+			// for multi-line endParts, ensure we have enough lines left
+			if i+len(endParts)-1 >= len(lines) {
+				break
+			}
+
+			matched := true
+			for k := 0; k < len(endParts); k++ {
+				if !strings.Contains(strings.TrimSpace(lines[i+k]), endParts[k]) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				endIdx = i + len(endParts) - 1
 				break
 			}
 		}
+
 		if endIdx == -1 {
 			fmt.Println("⚠️  end marker not found:", edit.End)
 			return lines

@@ -4,6 +4,8 @@ import Chat from "./Chat";
 import Login from "./Login";
 import Home from "./Home";
 import LearningList from "./LearningList";
+
+import NotesList from "./NotesList";
 import './App.css';
 import './styles/markdown.css';
 
@@ -49,6 +51,9 @@ function App() {
           <Link to="/" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Home</Link>
           <Link to="/chat" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Chat</Link>
           {token && userId && (
+            <Link to="/notes" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Notes</Link>
+          )}
+          {token && userId && (
             <Link to="/learnings" style={{ color: 'white', marginRight: '1rem', textDecoration: 'none', fontWeight: 'bold' }}>Learnings</Link>
           )}
         </div>
@@ -76,6 +81,11 @@ function App() {
         <Route path="/chat" element={
           <ProtectedRoute>
             <Chat token={token!} userId={userId!} handleLogout={handleLogout} />
+          </ProtectedRoute>
+        } />
+        <Route path="/notes" element={
+          <ProtectedRoute>
+            <NotesList token={token!} userId={userId!} />
           </ProtectedRoute>
         } />
         <Route path="/learnings" element={

@@ -221,55 +221,45 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		}
 	}()
 
-	// Get full action specs (params, returns, examples) from runtime registry
 	fullActions := a.dataActions.ListActions()
-	// actionsJSON, _ := json.MarshalIndent(fullActions, "", "  ")
-	// actionsJSONStr := string(actionsJSON)
 
-	var systemPrompt string
-	var userPrompt string
-
-	systemPrompt = fmt.Sprintf(`
+	// EXPLICIT DECISION PROCESS RE-INJECTION HERE:
+	systemPrompt := fmt.Sprintf(`
 		You are Astra’s  sequential execution Planner.
 
 		Context:
 		- Full mind map plan: %s
 		- Previous execution results: %s
-		**Available Actions (full description with usage instruction):** 
+		- Decision Process Description: %s
+		**Available Actions (full description with usage instruction):**
 		<available_actions_with_full_description>
 		%s
 		</available_actions_with_full_description>
 
 		Task:
-		You are provided with a full mind map of responding 
-		to user query.
-		And you are provided with all actions that you can take and 
-		all previous execution determined by you and their results.
+		You are provided with a full mind map of responding to user query.
+		And you are provided with all actions that you can take and all previous execution determined by you and their results.
 
-		Think properly and present only the next single 
-		concrete execution plan (single JSON object).
-
-		
+		Think properly and present only the next single concrete execution plan (single JSON object).
 
 		Rules:
 		- Output exactly one JSON object and nothing else.
 		- If no concrete action is required, set "action" to an empty string and return the schema.
 
 		## Output Schema (stick to this)
-			%s
+		%s
 		`,
 		jsonutils.ToJSON(roughPlan),
 		jsonutils.ToJSON(results),
+		a.Config.DecisionProcess.Description,
 		jsonutils.ToJSON(fullActions),
 		a.Config.OutputFormats.ExecutionStepOutputJSON,
 	)
 
-	// fmt.Println("debug generateNextExecutionPlan prompt ", systemPrompt)
-
 	currentDateStr := time.Now().Format("January 2, 2006")
 	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
 
-	userPrompt = datePreamble + fmt.Sprintf(`
+	userPrompt := datePreamble + fmt.Sprintf(`
 		Please analyze and create a good thoughtful 
 		execution plan and output a single object
 		Please stick to the json output format and include all output in the JSON
@@ -299,13 +289,10 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 	fmt.Println("\nexec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
-	// respJSON = jsonutils.CleanJSON(respJSON)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
 
-	// persist for traceability
-	// a.storeState("execution_step_expand", plan)
 	a.ExecutionPlans = append(a.ExecutionPlans, plan)
 	return plan
 }
