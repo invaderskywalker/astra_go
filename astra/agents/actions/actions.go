@@ -341,13 +341,13 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 	})
 
 	// --- Register learning actions from YAML (atomic, robust) ---
-	learningYAMLDir := "astra/agents/configs/actions/learning"
-	learningActionsYAML, err := configs.LoadActionsYAMLInDir(learningYAMLDir)
+	knowledgeActionYmlDir := "astra/agents/configs/actions/knowledge"
+	learningActionsYAML, err := configs.LoadActionsYAMLInDir(knowledgeActionYmlDir)
 	if err != nil {
 		panic("Failed to load learning actions YAML configs: " + err.Error())
 	}
 	// Registration data pairing key, params, and function
-	var learningRegistrations = []struct {
+	var longTermKnowledgeRegistrations = []struct {
 		key    string
 		params interface{}
 		fn     interface{}
@@ -356,7 +356,7 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		{"get_all_long_term_knowledge_for_user", struct{}{}, a.GetAllLongTermKnowledgeForUserAction},
 		{"get_all_long_term_knowledge_for_user_by_type", GetAllLongTermKnowledgeByTypeParams{}, a.GetAllLongTermKnowledgeForUserByTypeAction},
 	}
-	for _, reg := range learningRegistrations {
+	for _, reg := range longTermKnowledgeRegistrations {
 		yamlCfg, ok := learningActionsYAML[reg.key]
 		if !ok {
 			panic("Missing YAML: " + reg.key)
