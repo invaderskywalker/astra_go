@@ -1,3 +1,4 @@
+// astra/sources/psql/models/long_term_knowledge.go
 package models
 
 import (
@@ -7,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type LearningKnowledge struct {
+type LongTermKnowledge struct {
 	ID            uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
 	UserID        int       `json:"user_id" gorm:"not null"`
 	User          User      `json:"-" gorm:"foreignKey:UserID;references:ID;constraint:OnDelete:CASCADE"`
@@ -16,11 +17,10 @@ type LearningKnowledge struct {
 	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
 }
 
-func (LearningKnowledge) TableName() string {
-	return "learning_knowledge"
+func (LongTermKnowledge) TableName() string {
+	return "long_term_knowledge"
 }
 
-func (lk *LearningKnowledge) BeforeCreate(tx *gorm.DB) (err error) {
-	// Ensure UUID extension is enabled
+func (ltk *LongTermKnowledge) BeforeCreate(tx *gorm.DB) (err error) {
 	return tx.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`).Error
 }

@@ -1,4 +1,4 @@
-name: get_all_learning_knowledge_for_user
+name: get_all_long_term_knowledge_for_user
 description: "Retrieves all LearningKnowledge entries for the user. Use to list the full knowledge base for this user."
 details: |
   Fetches all structured learning/knowledge records belonging to the current user.

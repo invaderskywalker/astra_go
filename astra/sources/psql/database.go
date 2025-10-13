@@ -43,7 +43,7 @@ func NewDatabase(ctx context.Context, cfg config.Config) (*Database, error) {
 		AutoMigrate(
 			&models.User{},
 			&models.ChatMessage{},
-			&models.LearningKnowledge{},
+			&models.LongTermKnowledge{},
 		)
 	fmt.Println("err in migrate", err)
 	if err != nil {

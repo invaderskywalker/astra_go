@@ -1,4 +1,4 @@
-name: get_all_learning_knowledge_for_user_by_type
+name: get_all_long_term_knowledge_for_user_by_type
 description: "Retrieves LearningKnowledge entries for the user filtered by knowledge_type. Use to access only a specific kind of learned object."
 details: |
   Lists all knowledge records for the user matching the specified type (e.g. code_fact, mental_model).

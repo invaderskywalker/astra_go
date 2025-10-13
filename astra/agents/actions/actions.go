@@ -14,10 +14,10 @@ import (
 
 // DataActions manages a set of actions for database and code manipulation.
 type DataActions struct {
-	actions     map[string]ActionSpec
-	db          *gorm.DB
-	UserID      int
-	learningDao *dao.LearningKnowledgeDAO
+	actions              map[string]ActionSpec
+	db                   *gorm.DB
+	UserID               int
+	longTermKnowledgeDao *dao.LongTermKnowledgeDAO
 }
 
 type ActionSummary struct {
@@ -36,12 +36,12 @@ type ActionSpec struct {
 
 // NewDataActions initializes the DataActions registry.
 func NewDataActions(db *gorm.DB, userId int) *DataActions {
-	learningDao := dao.NewLearningKnowledgeDAO(db)
+	longTermKnowledgeDao := dao.NewLongTermKnowledgeDAO(db)
 	a := &DataActions{
-		actions:     make(map[string]ActionSpec),
-		db:          db,
-		UserID:      userId,
-		learningDao: learningDao,
+		actions:              make(map[string]ActionSpec),
+		db:                   db,
+		UserID:               userId,
+		longTermKnowledgeDao: longTermKnowledgeDao,
 	}
 
 	a.register(ActionSpec{
@@ -352,10 +352,9 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		params interface{}
 		fn     interface{}
 	}{
-		{"create_learning_knowledge", CreateLearningKnowledgeParams{}, a.CreateLearningKnowledgeAction},
-		// {"update_learning_knowledge", UpdateLearningKnowledgeParams{}, a.UpdateLearningKnowledgeAction},
-		{"get_all_learning_knowledge_for_user", struct{}{}, a.GetAllLearningKnowledgeForUserAction},
-		{"get_all_learning_knowledge_for_user_by_type", GetAllLearningKnowledgeByTypeParams{}, a.GetAllLearningKnowledgeForUserByTypeAction},
+		{"create_long_term_knowledge", CreateLongTermKnowledgeParams{}, a.CreateLongTermKnowledgeAction},
+		{"get_all_long_term_knowledge_for_user", struct{}{}, a.GetAllLongTermKnowledgeForUserAction},
+		{"get_all_long_term_knowledge_for_user_by_type", GetAllLongTermKnowledgeByTypeParams{}, a.GetAllLongTermKnowledgeForUserByTypeAction},
 	}
 	for _, reg := range learningRegistrations {
 		yamlCfg, ok := learningActionsYAML[reg.key]

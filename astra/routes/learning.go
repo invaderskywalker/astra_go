@@ -1,3 +1,4 @@
+// astra/routes/long_term.go
 package routes
 
 import (
@@ -11,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func handleLearningJSON(handler func(r *http.Request) (any, int, error)) http.HandlerFunc {
+func handleLongTermJSON(handler func(r *http.Request) (any, int, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		res, status, err := handler(r)
 		if err != nil {
@@ -24,37 +25,36 @@ func handleLearningJSON(handler func(r *http.Request) (any, int, error)) http.Ha
 	}
 }
 
-func LearningRoutes(ctrl *controllers.LearningController, cfg config.Config) chi.Router {
+func LongTermRoutes(ctrl *controllers.LongTermController, cfg config.Config) chi.Router {
 	r := chi.NewRouter()
-	// Auth required
 	r.Group(func(gr chi.Router) {
 		gr.Use(middlewares.AuthMiddleware(cfg))
 
-		gr.Get("/fetch/{user_id}", handleLearningJSON(func(r *http.Request) (any, int, error) {
+		gr.Get("/fetch/{user_id}", handleLongTermJSON(func(r *http.Request) (any, int, error) {
 			idStr := chi.URLParam(r, "user_id")
 			id, err := strconv.Atoi(idStr)
 			if err != nil {
 				return nil, http.StatusBadRequest, err
 			}
-			learnings, err := ctrl.GetAllLearningKnowledgeByUser(r.Context(), id)
+			longterms, err := ctrl.GetAllLongTermKnowledgeByUser(r.Context(), id)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
-			return learnings, http.StatusOK, nil
+			return longterms, http.StatusOK, nil
 		}))
 
-		gr.Get("/fetch/{user_id}/type/{knowledge_type}", handleLearningJSON(func(r *http.Request) (any, int, error) {
+		gr.Get("/fetch/{user_id}/type/{knowledge_type}", handleLongTermJSON(func(r *http.Request) (any, int, error) {
 			idStr := chi.URLParam(r, "user_id")
 			id, err := strconv.Atoi(idStr)
 			if err != nil {
 				return nil, http.StatusBadRequest, err
 			}
 			typeStr := chi.URLParam(r, "knowledge_type")
-			learnings, err := ctrl.GetAllLearningKnowledgeByUserAndType(r.Context(), id, typeStr)
+			longterms, err := ctrl.GetAllLongTermKnowledgeByUserAndType(r.Context(), id, typeStr)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
-			return learnings, http.StatusOK, nil
+			return longterms, http.StatusOK, nil
 		}))
 	})
 	return r

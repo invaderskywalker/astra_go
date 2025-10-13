@@ -1,4 +1,4 @@
-// Package actions: named DataActions for learning_knowledge, doctrine-aligned
+// astra/agents/actions/long_term_knowledge.go
 package actions
 
 import (
@@ -9,52 +9,45 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateLearningKnowledgeParams represents parameters for creating a LearningKnowledge entry.
-type CreateLearningKnowledgeParams struct {
+type CreateLongTermKnowledgeParams struct {
 	KnowledgeType string `json:"knowledge_type"`
 	KnowledgeBlob string `json:"knowledge_blob"`
 }
 
-// UpdateLearningKnowledgeParams represents parameters for updating a LearningKnowledge entry.
-type UpdateLearningKnowledgeParams struct {
+type UpdateLongTermKnowledgeParams struct {
 	Id      string                 `json:"id"`
 	Updates map[string]interface{} `json:"updates"`
 }
 
-// GetAllLearningKnowledgeByTypeParams represents params to fetch by type.
-type GetAllLearningKnowledgeByTypeParams struct {
+type GetAllLongTermKnowledgeByTypeParams struct {
 	KnowledgeType string `json:"knowledge_type"`
 }
 
-// CreateLearningKnowledgeAction: Named DataAction wrapping DAO
-func (a *DataActions) CreateLearningKnowledgeAction(p CreateLearningKnowledgeParams) error {
-	lk := models.LearningKnowledge{
+func (a *DataActions) CreateLongTermKnowledgeAction(p CreateLongTermKnowledgeParams) error {
+	ltk := models.LongTermKnowledge{
 		UserID:        a.UserID,
 		KnowledgeType: p.KnowledgeType,
 		KnowledgeBlob: p.KnowledgeBlob,
 	}
 	ctx := context.Background()
-	return a.learningDao.CreateLearningKnowledge(ctx, &lk)
+	return a.longTermKnowledgeDao.CreateLongTermKnowledge(ctx, &ltk)
 }
 
-// UpdateLearningKnowledgeAction: Named DataAction for updates
-func (a *DataActions) UpdateLearningKnowledgeAction(p UpdateLearningKnowledgeParams) error {
+func (a *DataActions) UpdateLongTermKnowledgeAction(p UpdateLongTermKnowledgeParams) error {
 	id, err := uuid.Parse(p.Id)
 	if err != nil {
 		return fmt.Errorf("invalid uuid: %w", err)
 	}
 	ctx := context.Background()
-	return a.learningDao.UpdateLearningKnowledge(ctx, id, p.Updates)
+	return a.longTermKnowledgeDao.UpdateLongTermKnowledge(ctx, id, p.Updates)
 }
 
-// GetAllLearningKnowledgeForUserAction: Named DataAction (returns slice)
-func (a *DataActions) GetAllLearningKnowledgeForUserAction() ([]models.LearningKnowledge, error) {
+func (a *DataActions) GetAllLongTermKnowledgeForUserAction() ([]models.LongTermKnowledge, error) {
 	ctx := context.Background()
-	return a.learningDao.GetAllLearningKnowledgeByUser(ctx, a.UserID)
+	return a.longTermKnowledgeDao.GetAllLongTermKnowledgeByUser(ctx, a.UserID)
 }
 
-// GetAllLearningKnowledgeForUserByTypeAction: Filtered fetch
-func (a *DataActions) GetAllLearningKnowledgeForUserByTypeAction(p GetAllLearningKnowledgeByTypeParams) ([]models.LearningKnowledge, error) {
+func (a *DataActions) GetAllLongTermKnowledgeForUserByTypeAction(p GetAllLongTermKnowledgeByTypeParams) ([]models.LongTermKnowledge, error) {
 	ctx := context.Background()
-	return a.learningDao.GetLearningKnowledgeByKnowledgeType(ctx, a.UserID, p.KnowledgeType)
+	return a.longTermKnowledgeDao.GetLongTermKnowledgeByKnowledgeType(ctx, a.UserID, p.KnowledgeType)
 }

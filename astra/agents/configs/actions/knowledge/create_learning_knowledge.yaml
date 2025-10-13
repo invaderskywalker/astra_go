@@ -1,4 +1,4 @@
-name: "create_learning_knowledge"
+name: "create_long_term_knowledge"
 description: "Creates a new LearningKnowledge entry for the user. Used when storing a new fact, insight, or concept in the knowledge base."
 details: |
   Creates a new plain-text learning entry for the current user. 

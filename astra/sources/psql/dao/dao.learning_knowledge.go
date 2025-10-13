@@ -1,3 +1,4 @@
+// astra/sources/psql/dao/dao.long_term_knowledge.go
 package dao
 
 import (
@@ -8,35 +9,32 @@ import (
 	"gorm.io/gorm"
 )
 
-type LearningKnowledgeDAO struct {
+type LongTermKnowledgeDAO struct {
 	DB *gorm.DB
 }
 
-func NewLearningKnowledgeDAO(db *gorm.DB) *LearningKnowledgeDAO {
-	return &LearningKnowledgeDAO{DB: db}
+func NewLongTermKnowledgeDAO(db *gorm.DB) *LongTermKnowledgeDAO {
+	return &LongTermKnowledgeDAO{DB: db}
 }
 
-// CreateLearningKnowledge inserts a new LearningKnowledge record.
-func (dao *LearningKnowledgeDAO) CreateLearningKnowledge(ctx context.Context, lk *models.LearningKnowledge) error {
-	return dao.DB.WithContext(ctx).Create(lk).Error
+func (dao *LongTermKnowledgeDAO) CreateLongTermKnowledge(ctx context.Context, ltk *models.LongTermKnowledge) error {
+	return dao.DB.WithContext(ctx).Create(ltk).Error
 }
 
-// GetLearningKnowledgeByID fetches a LearningKnowledge by UUID.
-func (dao *LearningKnowledgeDAO) GetLearningKnowledgeByID(ctx context.Context, id uuid.UUID) (*models.LearningKnowledge, error) {
-	var lk models.LearningKnowledge
-	err := dao.DB.WithContext(ctx).First(&lk, "id = ?", id).Error
+func (dao *LongTermKnowledgeDAO) GetLongTermKnowledgeByID(ctx context.Context, id uuid.UUID) (*models.LongTermKnowledge, error) {
+	var ltk models.LongTermKnowledge
+	err := dao.DB.WithContext(ctx).First(&ltk, "id = ?", id).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &lk, nil
+	return &ltk, nil
 }
 
-// GetAllLearningKnowledgeByUser fetches all LearningKnowledge items for a user, ordered by CreatedAt desc.
-func (dao *LearningKnowledgeDAO) GetAllLearningKnowledgeByUser(ctx context.Context, userID int) ([]models.LearningKnowledge, error) {
-	var knowledge []models.LearningKnowledge
+func (dao *LongTermKnowledgeDAO) GetAllLongTermKnowledgeByUser(ctx context.Context, userID int) ([]models.LongTermKnowledge, error) {
+	var knowledge []models.LongTermKnowledge
 	err := dao.DB.WithContext(ctx).Where("user_id = ?", userID).Order("created_at desc").Find(&knowledge).Error
 	if err != nil {
 		return nil, err
@@ -44,19 +42,16 @@ func (dao *LearningKnowledgeDAO) GetAllLearningKnowledgeByUser(ctx context.Conte
 	return knowledge, nil
 }
 
-// UpdateLearningKnowledge updates an existing LearningKnowledge record by ID.
-func (dao *LearningKnowledgeDAO) UpdateLearningKnowledge(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
-	return dao.DB.WithContext(ctx).Model(&models.LearningKnowledge{}).Where("id = ?", id).Updates(updates).Error
+func (dao *LongTermKnowledgeDAO) UpdateLongTermKnowledge(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	return dao.DB.WithContext(ctx).Model(&models.LongTermKnowledge{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// DeleteLearningKnowledge deletes a LearningKnowledge record by ID.
-func (dao *LearningKnowledgeDAO) DeleteLearningKnowledge(ctx context.Context, id uuid.UUID) error {
-	return dao.DB.WithContext(ctx).Where("id = ?", id).Delete(&models.LearningKnowledge{}).Error
+func (dao *LongTermKnowledgeDAO) DeleteLongTermKnowledge(ctx context.Context, id uuid.UUID) error {
+	return dao.DB.WithContext(ctx).Where("id = ?", id).Delete(&models.LongTermKnowledge{}).Error
 }
 
-// GetLearningKnowledgeByFilters fetches LearningKnowledge items matching arbitrary filters (e.g., {"user_id":, "knowledge_type":, ...}).
-func (dao *LearningKnowledgeDAO) GetLearningKnowledgeByKnowledgeType(ctx context.Context, user_id int, knowledge_type string) ([]models.LearningKnowledge, error) {
-	var knowledge []models.LearningKnowledge
+func (dao *LongTermKnowledgeDAO) GetLongTermKnowledgeByKnowledgeType(ctx context.Context, user_id int, knowledge_type string) ([]models.LongTermKnowledge, error) {
+	var knowledge []models.LongTermKnowledge
 	db := dao.DB.WithContext(ctx)
 	db = db.Where("knowledge_type = ?", knowledge_type)
 	db = db.Where("user_id = ?", user_id)
