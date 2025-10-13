@@ -1,0 +1,5 @@
+name: "fetch_knowledge_types"
+description: "fetch knowledge types that astra has collected till now"
+details:
+params:
+  

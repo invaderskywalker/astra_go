@@ -353,6 +353,7 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		fn     interface{}
 	}{
 		{"create_long_term_knowledge", CreateLongTermKnowledgeParams{}, a.CreateLongTermKnowledgeAction},
+		{"fetch_knowledge_types", struct{}{}, a.GetAllKnowledgeTypesForUser},
 		{"get_all_long_term_knowledge_for_user", struct{}{}, a.GetAllLongTermKnowledgeForUserAction},
 		{"get_all_long_term_knowledge_for_user_by_type", GetAllLongTermKnowledgeByTypeParams{}, a.GetAllLongTermKnowledgeForUserByTypeAction},
 	}

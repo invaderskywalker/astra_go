@@ -61,3 +61,27 @@ func (dao *LongTermKnowledgeDAO) GetLongTermKnowledgeByKnowledgeType(ctx context
 	}
 	return knowledge, nil
 }
+
+func (dao *LongTermKnowledgeDAO) GetDistinctKnowledgeTypes(ctx context.Context, userID int) ([]string, error) {
+	var knowledgeTypes []string
+	db := dao.DB.WithContext(ctx)
+
+	rows, err := db.Raw(
+		`SELECT DISTINCT(knowledge_type) FROM long_term_knowledge WHERE user_id = ?`,
+		userID,
+	).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kt string
+		if err := rows.Scan(&kt); err != nil {
+			return nil, err
+		}
+		knowledgeTypes = append(knowledgeTypes, kt)
+	}
+
+	return knowledgeTypes, nil
+}

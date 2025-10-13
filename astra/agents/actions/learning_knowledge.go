@@ -51,3 +51,8 @@ func (a *DataActions) GetAllLongTermKnowledgeForUserByTypeAction(p GetAllLongTer
 	ctx := context.Background()
 	return a.longTermKnowledgeDao.GetLongTermKnowledgeByKnowledgeType(ctx, a.UserID, p.KnowledgeType)
 }
+
+func (a *DataActions) GetAllKnowledgeTypesForUser() ([]string, error) {
+	ctx := context.Background()
+	return a.longTermKnowledgeDao.GetDistinctKnowledgeTypes(ctx, a.UserID)
+}
