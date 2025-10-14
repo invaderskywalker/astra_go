@@ -1,5 +1,42 @@
-// Centralized API utility for Astra frontend
+// Centralized and type-safe API utility for Astra frontend
 export const API_BASE = "http://localhost:8000";
+
+// ========== User Profile ==========
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  full_name?: string | null;
+  image_url?: string | null;
+}
+
+export interface UpdateUserProfilePayload {
+  username?: string;
+  email?: string;
+  full_name?: string;
+  image_url?: string;
+}
+
+export async function getCurrentUserProfile(token: string): Promise<UserProfile> {
+  const resp = await fetch(`${API_BASE}/users/me`, {
+    headers: { Authorization: token }
+  });
+  if (!resp.ok) throw new Error(await resp.text());
+  return await resp.json();
+}
+
+export async function updateCurrentUserProfile(token: string, data: UpdateUserProfilePayload): Promise<UserProfile> {
+  const resp = await fetch(`${API_BASE}/users/me`, {
+    method: "PUT",
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: token
+    },
+    body: JSON.stringify(data)
+  });
+  if (!resp.ok) throw new Error(await resp.text());
+  return await resp.json();
+}
 
 // ========== Auth ==========
 export async function login(username: string): Promise<{ token: string; user_id: number }> {

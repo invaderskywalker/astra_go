@@ -46,6 +46,36 @@ func UserRoutes(ctrl *controllers.UserController, cfg config.Config) chi.Router 
 			return user, http.StatusOK, nil
 		}))
 
+		gr.Get("/me", handleJSON(func(r *http.Request) (any, int, error) {
+			userIDVal := r.Context().Value(middlewares.UserIDKey)
+			id, ok := userIDVal.(int)
+			if !ok {
+				return nil, http.StatusUnauthorized, nil
+			}
+			user, err := ctrl.GetUser(r.Context(), id)
+			if err != nil {
+				return nil, http.StatusInternalServerError, err
+			}
+			return user, http.StatusOK, nil
+		}))
+
+		gr.Put("/me", handleJSON(func(r *http.Request) (any, int, error) {
+			userIDVal := r.Context().Value(middlewares.UserIDKey)
+			id, ok := userIDVal.(int)
+			if !ok {
+				return nil, http.StatusUnauthorized, nil
+			}
+			var req types.UpdateUserRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				return nil, http.StatusBadRequest, err
+			}
+			user, err := ctrl.UpdateUser(r.Context(), id, req.Username, req.Email, req.FullName, req.ImageURL)
+			if err != nil {
+				return nil, http.StatusInternalServerError, err
+			}
+			return user, http.StatusOK, nil
+		}))
+
 		gr.Get("/fetch", handleJSON(func(r *http.Request) (any, int, error) {
 			users, err := ctrl.GetAllUsers(r.Context())
 			if err != nil {
@@ -60,7 +90,7 @@ func UserRoutes(ctrl *controllers.UserController, cfg config.Config) chi.Router 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			return nil, http.StatusBadRequest, err
 		}
-		user, err := ctrl.CreateUser(r.Context(), req.Username, req.Email, req.FullName)
+		user, err := ctrl.CreateUser(r.Context(), req.Username, req.Email, req.FullName, req.ImageURL)
 		if err != nil {
 			return nil, http.StatusInternalServerError, err
 		}
