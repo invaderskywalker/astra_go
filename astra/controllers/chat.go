@@ -140,6 +140,20 @@ func (c *ChatController) ListSessions(ctx context.Context, userID int) ([]types.
 }
 
 // NEW: Get all messages for a session (ownership enforced)
+
+// NEW: Delete a chat session (all messages), enforcing ownership
+func (c *ChatController) DeleteSession(ctx context.Context, userID int, sessionID string) error {
+	belongs, err := c.chatDAO.SessionBelongsToUser(ctx, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	if !belongs {
+		return errors.New("session not found or forbidden")
+	}
+	_, err = c.chatDAO.DeleteSessionByUser(ctx, sessionID, userID)
+	return err
+}
+
 func (c *ChatController) GetMessagesForSession(ctx context.Context, userID int, sessionID string) ([]map[string]interface{}, error) {
 	// Security: check this session is owned by the user
 	belongs, err := c.chatDAO.SessionBelongsToUser(ctx, sessionID, userID)

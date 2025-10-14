@@ -99,6 +99,15 @@ func (dao *ChatMessageDAO) GetMessagesBySession(ctx context.Context, sessionID s
 }
 
 // --- NEW: Security check: verify session_id belongs to user ---
+
+// --- NEW: Delete all messages for a session owned by a user ---
+func (dao *ChatMessageDAO) DeleteSessionByUser(ctx context.Context, sessionID string, userID int) (int64, error) {
+	result := dao.DB.WithContext(ctx).
+		Where("session_id = ? AND user_id = ?", sessionID, userID).
+		Delete(&models.ChatMessage{})
+	return result.RowsAffected, result.Error
+}
+
 func (dao *ChatMessageDAO) SessionBelongsToUser(ctx context.Context, sessionID string, userID int) (bool, error) {
 	var cnt int64
 	err := dao.DB.WithContext(ctx).

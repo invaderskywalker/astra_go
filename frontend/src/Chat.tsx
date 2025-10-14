@@ -66,11 +66,13 @@ function ThreadsPanel({
   threads,
   activeSessionId,
   onSelectSession,
+  onDeleteSession,
   isLoading
 }: {
   threads: ChatSessionSummary[];
   activeSessionId: string;
   onSelectSession: (session_id: string) => void;
+  onDeleteSession: (session_id: string) => void;
   isLoading: boolean;
 }) {
   return (
@@ -87,7 +89,11 @@ function ThreadsPanel({
               <li
                 key={thread.session_id}
                 className={thread.session_id === activeSessionId ? "thread selected" : "thread"}
-                onClick={() => onSelectSession(thread.session_id)}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).classList.contains('thread-delete-btn')) return;
+                  onSelectSession(thread.session_id);
+                }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
               >
                 <span className="thread-title">
                   {thread.last_message ? thread.session_id.slice(0, 15) : "(no message yet)"}
@@ -95,6 +101,25 @@ function ThreadsPanel({
                 <span className="thread-meta">
                   {new Date(thread.last_activity).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
+                <button
+                  className="thread-delete-btn"
+                  title="Delete thread"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteSession(thread.session_id);
+                  }}
+                  style={{ 
+                    marginLeft: '0.75em',
+                    border: 'none', 
+                    background: 'transparent',
+                    color: '#c22',
+                    cursor: 'pointer',
+                    fontSize: '1em'
+                  }}
+                  aria-label="Delete thread"
+                >
+                  🗑️
+                </button>
               </li>
             ))
           )}
@@ -231,10 +256,41 @@ function ChatPanel({
   );
 }
 
+
+// --- Delete a thread (by session id) via backend API ---
+async function deleteThreadAPI(session_id: string, token: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`http://localhost:8000/chat/session/${session_id}`, {
+      method: 'DELETE',
+      headers: { Authorization: token }
+    });
+    return resp.status === 204;
+  } catch {
+    return false;
+  }
+}
+
 export default function Chat({ token, userId, handleLogout }: ChatProps) {
   console.log("token in chat ", token)
   const [threads, setThreads] = useState<ChatSessionSummary[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(false);
+
+  // --- Delete a thread and update UI accordingly ---
+  const handleDeleteSession = async (sid: string) => {
+    if (!sid) return;
+    const confirmed = window.confirm('Are you sure you want to delete this chat thread? This action cannot be undone.');
+    if (!confirmed) return;
+    const ok = await deleteThreadAPI(sid, token);
+    if (ok) {
+      setThreads(prev => prev.filter(th => th.session_id !== sid));
+      if (sessionId === sid) {
+        setSessionId("");
+        setMessages([]);
+      }
+    } else {
+      window.alert('Failed to delete chat thread.');
+    }
+  };
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [intermediateMessages, setIntermediateMessages] = useState<IntermediateMessage[]>([]);
@@ -563,10 +619,11 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
   // --- Layout with updated thread aware panels ---
   return (
     <div className="chat-3panel-root">
-      <ThreadsPanel
+<ThreadsPanel
         threads={threads}
         activeSessionId={sessionId}
         onSelectSession={handleSelectSession}
+        onDeleteSession={handleDeleteSession}
         isLoading={isLoadingThreads}
       />
       <ChatPanel

@@ -44,6 +44,23 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 			json.NewEncoder(w).Encode(sessions)
 		})
 		// --- NEW: GET /chat/session/{session_id}/messages : all messages for a session
+
+		// --- NEW: DELETE /chat/session/{session_id} : delete one session (thread)
+		gr.Delete("/session/{session_id}", func(w http.ResponseWriter, r *http.Request) {
+			userID := r.Context().Value(middlewares.UserIDKey).(int)
+			sessionID := chi.URLParam(r, "session_id")
+			err := ctrl.DeleteSession(r.Context(), userID, sessionID)
+			if err != nil {
+				if err.Error() == "session not found or forbidden" {
+					http.Error(w, err.Error(), http.StatusNotFound)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+
 		gr.Get("/session/{session_id}/messages", func(w http.ResponseWriter, r *http.Request) {
 			userID := r.Context().Value(middlewares.UserIDKey).(int)
 			sessionID := chi.URLParam(r, "session_id")
