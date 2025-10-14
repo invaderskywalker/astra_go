@@ -62,9 +62,9 @@ const Chat: React.FC<ChatProps> = ({ token, userId, handleLogout }) => {
         handleConnect={connectWebSocket}
         isLoadingMessages={isLoadingMessages}
       />
-      <ResizableThoughtPanel>
+      {/* <ResizableThoughtPanel> */}
         <ThoughtProcessPanel thoughts={intermediateMessages} />
-      </ResizableThoughtPanel>
+      {/* </ResizableThoughtPanel> */}
     </div>
   );
 };
