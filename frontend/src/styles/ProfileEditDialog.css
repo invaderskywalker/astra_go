@@ -1,0 +1,177 @@
+.profile-edit-backdrop {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(149, 177, 237, 0.27);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 20;
+  animation: fadeInModal .22s;
+}
+@keyframes fadeInModal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.profile-edit-dialog {
+  background: #fff;
+  border-radius: 18px;
+  min-width: 370px; max-width: 97vw;
+  padding: 34px 32px 26px 32px;
+  box-shadow: 0 4px 32px #2227, 0 0 0 1.5px #e5ebf5;
+  animation: scaleInModal .17s;
+  outline: none;
+}
+@keyframes scaleInModal {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.profile-edit-header {
+  margin-bottom: 14px;
+  text-align: center;
+}
+.profile-edit-header h2 {
+  font-size: 1.7rem;
+  margin: 0;
+  letter-spacing: 0.8px;
+  color: #25315a;
+  font-weight: 700;
+}
+.profile-edit-avatar-preview {
+  display: flex; flex-direction: column; align-items: center;
+  margin-bottom: 22px;
+}
+.profile-edit-avatar-ring {
+  width: 86px; height: 86px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #d4e1fa 30%, #f5e9ff 95%);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 4px;
+  border: 2.5px solid #a1c6ff33;
+  overflow: hidden;
+  box-shadow: 0 1.5px 6px #adc8f644;
+}
+.profile-edit-avatar-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  background: #e4e4e4;
+}
+.profile-edit-avatar-fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: #ececec;
+}
+.profile-edit-avatar-desc {
+  color: #91a2b1;
+  font-size: 0.96rem;
+  margin-top: 1px;
+}
+.profile-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 19px;
+}
+.profile-edit-field {
+  display: flex; flex-direction: column; gap: 0.5px;
+  margin-bottom: 0px;
+}
+.profile-edit-field label {
+  color: #2c3653;
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-bottom: 6px;
+  letter-spacing: 0.015em;
+  display: flex; flex-direction: column;
+  gap: 2px;
+}
+.profile-edit-input {
+  padding: 11px 14px;
+  border-radius: 9px;
+  border: 1.8px solid #e2ecf5;
+  background: #f6f8fb;
+  font-size: 1.06rem;
+  transition: border-color 0.20s, box-shadow 0.17s;
+  margin-top: 1.5px;
+  color: #25315a;
+  box-shadow: 0 1.5px 7px #bed4ee15 inset;
+}
+.profile-edit-input:focus {
+  border-color: #3787f8;
+  outline: none;
+  box-shadow: 0 0 0 2.5px #cadfffcc;
+  background: #f3f9ff;
+}
+.profile-edit-input:hover {
+  border-color: #7ab4ff;
+  background: #f7fbff;
+}
+.profile-edit-input[aria-invalid="true"] {
+  border-color: #ef2777;
+  background: #fff4f8;
+}
+.profile-edit-field-hint {
+  color: #8fa1b1; font-size: 0.91em; margin-top: 2px; font-style: italic;
+}
+.profile-edit-banner {
+  padding: 10px 13px;
+  margin: 10px 0 2px 0;
+  border-radius: 8px;
+  font-size: 0.99em;
+  text-align: center;
+  font-weight: 600;
+}
+.profile-edit-banner-error {
+  background: #ffe1e1;
+  color: #b00715;
+  border: 1.2px solid #ffbcbc;
+}
+.profile-edit-banner-success {
+  background: #e3ffe6;
+  color: #1c7d36;
+  border: 1.2px solid #affbbf;
+}
+.profile-edit-actions {
+  display: flex; justify-content: flex-end; gap: 14px;
+  margin-top: 26px;
+}
+.profile-edit-btn {
+  min-width: 96px;
+  font-size: 1.07em;
+  padding: 10px 18px;
+  border-radius: 9px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: background .17s, box-shadow .14s, color .13s;
+}
+.profile-edit-btn.primary {
+  background: linear-gradient(90deg,#4d8df7 49%,#467de5 100%);
+  color: #fff;
+  box-shadow: 0 2px 4.5px #4975c823;
+  border-bottom: 2.2px solid #2f6ac3;
+}
+.profile-edit-btn.primary:hover {
+  background: linear-gradient(90deg,#3562c8 49%,#3058a4 100%);
+}
+.profile-edit-btn.secondary {
+  background: #f6f8fb;
+  color: #37507b;
+  border: 1.3px solid #dde6ee;
+}
+.profile-edit-btn.secondary:hover {
+  background: #e3e8f8;
+  color: #34466d;
+}
+@media (max-width: 520px) {
+  .profile-edit-dialog {
+    min-width: unset;
+    padding: 15vw 6vw 8vw 6vw;
+  }
+  .profile-edit-actions {
+    flex-direction: column;
+    gap: 10px;
+    align-items: stretch;
+  }
+}

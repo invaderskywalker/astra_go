@@ -402,7 +402,7 @@
 
 .thought-messages {
   flex: 1;
-  padding: 19px 18px 6px 18px;
+  padding: 6px;
   overflow-y: auto;
 }
 
