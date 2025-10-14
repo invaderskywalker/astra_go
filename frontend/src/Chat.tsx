@@ -5,6 +5,7 @@ import MarkdownPreview from "@uiw/react-markdown-preview";
 import { v4 as uuidv4 } from 'uuid';
 import './styles/chat.css';
 import RenderJsonTree from "./RenderJsonTree";
+import { FaTrash } from "react-icons/fa";
 import {
   fetchChatSessions,
   fetchMessagesForSession,
@@ -98,11 +99,11 @@ function ThreadsPanel({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
               >
                 <span className="thread-title">
-                  {thread.last_message ? thread.session_id.slice(0, 15) : "(no message yet)"}
+                  {thread.last_message ? thread.session_id.slice(0, 20) : "(no message yet)"}
                 </span>
-                <span className="thread-meta">
+                {/* <span className="thread-meta">
                   {new Date(thread.last_activity).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </span>
+                </span> */}
                 <button
                   className="thread-delete-btn"
                   title="Delete thread"
@@ -114,13 +115,13 @@ function ThreadsPanel({
                     marginLeft: '0.75em',
                     border: 'none', 
                     background: 'transparent',
-                    color: '#c22',
+                    color: 'rgba(98, 98, 98, 1)',
                     cursor: 'pointer',
                     fontSize: '1em'
                   }}
                   aria-label="Delete thread"
                 >
-                  ðï¸
+                  <FaTrash />
                 </button>
               </li>
             ))
