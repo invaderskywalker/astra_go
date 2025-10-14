@@ -415,3 +415,48 @@
   color: inherit !important;
   font-size: 14px !important;
 }
+
+/* Prevent JSON from overflowing the message or thought box */
+.thought-message .thought-text,
+.msg-bubble .msg-text {
+  overflow-x: auto;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+}
+
+/* Scrollbars only when necessary for deep JSON */
+.thought-message .thought-text::-webkit-scrollbar,
+.msg-bubble .msg-text::-webkit-scrollbar {
+  height: 6px;
+}
+.thought-message .thought-text::-webkit-scrollbar-thumb,
+.msg-bubble .msg-text::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+/* Keep JSON indentation visually contained */
+.json-tree {
+  max-width: 100%;
+  overflow-x: auto;
+  padding-right: 8px;
+  box-sizing: border-box;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* Make nested JSON indentation compact on smaller panels */
+.json-tree .json-tree-indent {
+  border-left: 1.2px dashed #e0e0e8;
+  margin-left: 0;
+  padding-left: 8px;
+}
+
+/* Keep JSON keys/values from stretching horizontally */
+.json-tree div {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
