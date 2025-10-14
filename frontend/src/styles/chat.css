@@ -392,6 +392,10 @@
 
 .thought-header {
   padding: 18px 23px 13px 23px;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
   font-size: 1.14em;
   font-weight: 600;
   color: #282b34;
