@@ -4,6 +4,37 @@ import { useEffect, useRef, useState } from "react";
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import { v4 as uuidv4 } from 'uuid';
 import './styles/chat.css';
+import RenderJsonTree from "./RenderJsonTree";
+
+function isJsonString(str: string): boolean {
+  if (typeof str !== "string") return false;
+  try {
+    const parsed = JSON.parse(str);
+    // Only consider objects/arrays as JSON, not plain numbers/booleans/null
+    return typeof parsed === "object" && parsed !== null;
+  } catch {
+    return false;
+  }
+}
+
+function parseMaybeJson(input: any): any {
+  if (typeof input !== "string") return input;
+  try {
+    const parsed = JSON.parse(input);
+    // recursively handle if the parsed value itself contains stringified JSON
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const key in parsed) {
+        if (typeof parsed[key] === "string" && isJsonString(parsed[key])) {
+          parsed[key] = parseMaybeJson(parsed[key]);
+        }
+      }
+    }
+    return parsed;
+  } catch {
+    return input;
+  }
+}
+
 
 interface Message {
   id: string;
@@ -59,7 +90,7 @@ function ThreadsPanel({
                 onClick={() => onSelectSession(thread.session_id)}
               >
                 <span className="thread-title">
-                  {thread.last_message ? thread.last_message.slice(0, 28) : "(no message yet)"}
+                  {thread.last_message ? thread.session_id.slice(0, 15) : "(no message yet)"}
                 </span>
                 <span className="thread-meta">
                   {new Date(thread.last_activity).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -74,23 +105,46 @@ function ThreadsPanel({
   );
 }
 
+
+
+
 function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) {
   return (
     <div className="thought-panel">
       <div className="thought-header">Astra's Thought Process</div>
       <div className="thought-messages">
-        {thoughts.length === 0
-          ? <div className="thought-empty">Astra's reasoning/steps will appear here as you chat </div>
-          : thoughts.map((m, i) => (
+        {thoughts.length === 0 ? (
+          <div className="thought-empty">
+            Astra's reasoning/steps will appear here as you chat
+          </div>
+        ) : (
+          thoughts.map((m, i) => {
+            // --- improved JSON detection ---
+            const jsonMatch = m.text.match(/{[\s\S]*}$/); // capture trailing JSON even with prefix
+            const maybeJson = jsonMatch ? jsonMatch[0] : m.text;
+            const isJson = isJsonString(maybeJson);
+            const parsedData = isJson ? parseMaybeJson(maybeJson) : maybeJson;
+
+
+            return (
               <div key={i} className="thought-message">
-                <span className="thought-text">{m.text}</span>
+                <span className="thought-text">
+                  {isJson && parsedData ? (
+                    <RenderJsonTree data={parsedData} />
+                  ) : (
+                    m.text
+                  )}
+                </span>
                 <span className="thought-time">{m.timestamp}</span>
               </div>
-            ))}
+            );
+          })
+        )}
       </div>
     </div>
   );
 }
+
 
 function ChatPanel({
   messages,
@@ -184,6 +238,22 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [intermediateMessages, setIntermediateMessages] = useState<IntermediateMessage[]>([]);
+
+// Inject sample intermediate messages in development/demo mode
+// useEffect(() => {
+//   if (intermediateMessages.length === 0) {
+//     setIntermediateMessages([
+//       { text: JSON.stringify({ simple: "value", number: 42 }), timestamp: "10:00" },
+//       { text: JSON.stringify([1, 2, 3, { deep: [true, false, null] }]), timestamp: "10:01" },
+//       { text: JSON.stringify({ nested: { obj: { foo: "bar", arr: [1, 2, { x: 9 }] } } }), timestamp: "10:02" },
+//       { text: JSON.stringify({ edge: null, bool: false, arr: [], obj: {} }), timestamp: "10:03" },
+//       { text: "Astra is thinking in natural language, too.", timestamp: "10:04" },
+//       { text: JSON.stringify({ reallyDeep: { a: { b: { c: [ { d: 1 }, { e: [2, 3] } ] } } } }), timestamp: "10:05" }
+//     ]);
+//   }
+// // eslint-disable-next-line react-hooks/exhaustive-deps
+// }, []);
+
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string>("");
   const [isConnected, setIsConnected] = useState(false);

@@ -42,11 +42,11 @@ func (c *AgentsController) ProcessAgentRequest(ctx context.Context, w *websocket
 
 	// Special handling for "init" query
 	if req.Query == "init" {
-		ack := `{"status":"connected","session_id":"` + req.SessionID + `"}`
-		if err := w.Write(ctx, websocket.MessageText, []byte(ack)); err != nil {
-			logging.ErrorLogger.Error("websocket write ack error", zap.Error(err))
-			return false
-		}
+		// ack := `{"status":"connected","session_id":"` + req.SessionID + `"}`
+		// if err := w.Write(ctx, websocket.MessageText, []byte(ack)); err != nil {
+		// 	logging.ErrorLogger.Error("websocket write ack error", zap.Error(err))
+		// 	return false
+		// }
 		return true
 	}
 

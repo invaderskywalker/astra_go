@@ -368,6 +368,47 @@
   }
 }
 
+/* JSON tree visual styles */
+.json-tree, .json-tree * {
+  font-family: 'JetBrains Mono', 'Fira Mono', 'Menlo', 'monospace', 'Poppins', sans-serif;
+  font-size: 0.98em;
+  color: #22325a;
+}
+.json-tree {
+  background: none;
+  margin: 0;
+  padding: 0;
+  line-height: 1.32;
+  word-break: break-all;
+}
+.json-tree .json-tree-key {
+  color: #2150b8;
+  font-weight: 600;
+}
+.json-tree .json-tree-string {
+  color: #C2185B;
+}
+.json-tree .json-tree-number {
+  color: #1565C0;
+}
+.json-tree .json-tree-bool {
+  color: #388E3C;
+}
+.json-tree .json-tree-null {
+  color: #888;
+  font-style: italic;
+}
+.json-tree .json-collapser {
+  cursor: pointer;
+  margin-right: 3px;
+  user-select: none;
+}
+.json-tree .json-tree-indent {
+  border-left: 1.5px dashed #e7e8ee;
+  margin-left: 0px;
+  padding-left: 10px;
+}
+
 /* Markdown preview style adjustment */
 .markdown-preview {
   background: transparent !important;
