@@ -4,24 +4,30 @@ import Chat from "./Chat";
 import Login from "./Login";
 import Home from "./Home";
 import LearningList from "./LearningList";
-
 import NotesList from "./NotesList";
 import './App.css';
 import './styles/markdown.css';
 
+// Robust state initialization and rehydration on refresh
 function App() {
-  const [token, setToken] = useState<string | null>(null);
-  const [userId, setUserId] = useState<number | null>(null);
+  // Use undefined as initial state to distinguish between not yet loaded and null (logged out)
+  const [token, setToken] = useState<string | null | undefined>(undefined);
+  const [userId, setUserId] = useState<number | null | undefined>(undefined);
 
+  // On mount, rehydrate auth state from localStorage
   useEffect(() => {
     const storedToken = localStorage.getItem("token");
     const storedUserId = localStorage.getItem("userId");
     if (storedToken && storedUserId) {
       setToken(storedToken);
       setUserId(parseInt(storedUserId, 10));
+    } else {
+      setToken(null);
+      setUserId(null);
     }
   }, []);
 
+  // Login and logout handlers update both state and localStorage
   const handleLogin = (newToken: string, newUserId: number) => {
     setToken(newToken);
     setUserId(newUserId);
@@ -62,6 +68,11 @@ function App() {
         )}
       </nav>
     );
+  }
+
+  // Ensure we wait for state hydration from localStorage before rendering routes
+  if (token === undefined || userId === undefined) {
+    return <div style={{ textAlign: 'center', marginTop: '15vh' }}><span>Loading...</span></div>;
   }
 
   function ProtectedRoute({ children }: { children: JSX.Element }) {
