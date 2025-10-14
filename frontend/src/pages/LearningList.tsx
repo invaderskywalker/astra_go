@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from 'react';
-import './styles/learning.css';
-import { fetchLearnings } from "./api";
+import '../styles/learning.css';
+import { fetchLearnings } from "../api";
 
 interface LearningKnowledge {
   id: string;

@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from 'react';
-import './styles/notes.css';
+import '../styles/notes.css';
 import {
   fetchNotes as apiFetchNotes,
   createNote as apiCreateNote,
   updateNote as apiUpdateNote,
   deleteNote as apiDeleteNote
-} from "./api";
+} from "../api";
 
 interface Note {
   id: string;
