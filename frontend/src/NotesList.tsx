@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from 'react';
 import './styles/notes.css';
+import {
+  fetchNotes as apiFetchNotes,
+  createNote as apiCreateNote,
+  updateNote as apiUpdateNote,
+  deleteNote as apiDeleteNote
+} from "./api";
 
 interface Note {
   id: string;
@@ -20,13 +26,9 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // For creating a new note
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
   const [creating, setCreating] = useState(false);
-
-  // For editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -36,11 +38,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`http://localhost:8000/notes/user/${userId}`, {
-        headers: { 'Authorization': `${token}` }
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await apiFetchNotes(token, userId);
       setNotes(data || []);
     } catch (e: any) {
       setError(e.message || 'Failed to fetch notes');
@@ -48,7 +46,6 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setIsLoading(false);
     }
   };
-
   useEffect(() => { fetchNotes(); }, [userId]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -56,15 +53,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
     if (!newContent.trim()) return;
     setCreating(true);
     try {
-      const res = await fetch('http://localhost:8000/notes/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `${token}`
-        },
-        body: JSON.stringify({ user_id: userId, title: newTitle, content: newContent })
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await apiCreateNote(token, userId, newTitle, newContent);
       setNewTitle('');
       setNewContent('');
       fetchNotes();
@@ -74,26 +63,16 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setCreating(false);
     }
   };
-
   const startEdit = (note: Note) => {
     setEditingId(note.id);
     setEditTitle(note.title);
     setEditContent(note.content);
   };
   const cancelEdit = () => { setEditingId(null); setEditTitle(''); setEditContent(''); };
-
   const handleUpdate = async (id: string) => {
     setUpdating(true);
     try {
-      const res = await fetch(`http://localhost:8000/notes/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `${token}`
-        },
-        body: JSON.stringify({ title: editTitle, content: editContent })
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await apiUpdateNote(token, id, editTitle, editContent);
       fetchNotes();
       cancelEdit();
     } catch (e: any) {
@@ -102,15 +81,10 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setUpdating(false);
     }
   };
-
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this note?')) return;
     try {
-      const res = await fetch(`http://localhost:8000/notes/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `${token}` }
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await apiDeleteNote(token, id);
       fetchNotes();
     } catch (e: any) {
       setError(e.message || 'Failed to delete note');
@@ -144,7 +118,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
           {creating ? 'Adding...' : 'Add Note'}
         </button>
       </form>
-      {isLoading && <div className="notes-list-loading">Loading&#8230;</div>}
+      {isLoading && <div className="notes-list-loading">Loadingâ¦</div>}
       {error && <div className="notes-list-error">{error}</div>}
       <div className="notes-list-items">
         {notes.length === 0 && !isLoading && !error && (

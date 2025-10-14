@@ -5,12 +5,16 @@ import MarkdownPreview from "@uiw/react-markdown-preview";
 import { v4 as uuidv4 } from 'uuid';
 import './styles/chat.css';
 import RenderJsonTree from "./RenderJsonTree";
+import {
+  fetchChatSessions,
+  fetchMessagesForSession,
+  deleteChatSession
+} from "./api";
 
 function isJsonString(str: string): boolean {
   if (typeof str !== "string") return false;
   try {
     const parsed = JSON.parse(str);
-    // Only consider objects/arrays as JSON, not plain numbers/booleans/null
     return typeof parsed === "object" && parsed !== null;
   } catch {
     return false;
@@ -21,7 +25,6 @@ function parseMaybeJson(input: any): any {
   if (typeof input !== "string") return input;
   try {
     const parsed = JSON.parse(input);
-    // recursively handle if the parsed value itself contains stringified JSON
     if (typeof parsed === "object" && parsed !== null) {
       for (const key in parsed) {
         if (typeof parsed[key] === "string" && isJsonString(parsed[key])) {
@@ -34,7 +37,6 @@ function parseMaybeJson(input: any): any {
     return input;
   }
 }
-
 
 interface Message {
   id: string;
@@ -118,7 +120,7 @@ function ThreadsPanel({
                   }}
                   aria-label="Delete thread"
                 >
-                  🗑️
+                  ðï¸
                 </button>
               </li>
             ))
@@ -129,9 +131,6 @@ function ThreadsPanel({
     </div>
   );
 }
-
-
-
 
 function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) {
   return (
@@ -144,13 +143,10 @@ function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) 
           </div>
         ) : (
           thoughts.map((m, i) => {
-            // --- improved JSON detection ---
-            const jsonMatch = m.text.match(/{[\s\S]*}$/); // capture trailing JSON even with prefix
+            const jsonMatch = m.text.match(/{[\s\S]*}$/);
             const maybeJson = jsonMatch ? jsonMatch[0] : m.text;
             const isJson = isJsonString(maybeJson);
             const parsedData = isJson ? parseMaybeJson(maybeJson) : maybeJson;
-
-
             return (
               <div key={i} className="thought-message">
                 <span className="thought-text">
@@ -169,7 +165,6 @@ function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) 
     </div>
   );
 }
-
 
 function ChatPanel({
   messages,
@@ -256,31 +251,15 @@ function ChatPanel({
   );
 }
 
-
-// --- Delete a thread (by session id) via backend API ---
-async function deleteThreadAPI(session_id: string, token: string): Promise<boolean> {
-  try {
-    const resp = await fetch(`http://localhost:8000/chat/session/${session_id}`, {
-      method: 'DELETE',
-      headers: { Authorization: token }
-    });
-    return resp.status === 204;
-  } catch {
-    return false;
-  }
-}
-
 export default function Chat({ token, userId, handleLogout }: ChatProps) {
-  console.log("token in chat ", token)
   const [threads, setThreads] = useState<ChatSessionSummary[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(false);
 
-  // --- Delete a thread and update UI accordingly ---
   const handleDeleteSession = async (sid: string) => {
     if (!sid) return;
     const confirmed = window.confirm('Are you sure you want to delete this chat thread? This action cannot be undone.');
     if (!confirmed) return;
-    const ok = await deleteThreadAPI(sid, token);
+    const ok = await deleteChatSession(sid, token);
     if (ok) {
       setThreads(prev => prev.filter(th => th.session_id !== sid));
       if (sessionId === sid) {
@@ -294,22 +273,6 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [intermediateMessages, setIntermediateMessages] = useState<IntermediateMessage[]>([]);
-
-// Inject sample intermediate messages in development/demo mode
-// useEffect(() => {
-//   if (intermediateMessages.length === 0) {
-//     setIntermediateMessages([
-//       { text: JSON.stringify({ simple: "value", number: 42 }), timestamp: "10:00" },
-//       { text: JSON.stringify([1, 2, 3, { deep: [true, false, null] }]), timestamp: "10:01" },
-//       { text: JSON.stringify({ nested: { obj: { foo: "bar", arr: [1, 2, { x: 9 }] } } }), timestamp: "10:02" },
-//       { text: JSON.stringify({ edge: null, bool: false, arr: [], obj: {} }), timestamp: "10:03" },
-//       { text: "Astra is thinking in natural language, too.", timestamp: "10:04" },
-//       { text: JSON.stringify({ reallyDeep: { a: { b: { c: [ { d: 1 }, { e: [2, 3] } ] } } } }), timestamp: "10:05" }
-//     ]);
-//   }
-// // eslint-disable-next-line react-hooks/exhaustive-deps
-// }, []);
-
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string>("");
   const [isConnected, setIsConnected] = useState(false);
@@ -332,15 +295,10 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
 
   useEffect(() => { scrollToBottom(); }, [messages, intermediateMessages]);
 
-  // --- NEW: Fetch all chat sessions ---
   const fetchThreads = async () => {
     setIsLoadingThreads(true);
     try {
-      const resp = await fetch("http://localhost:8000/chat/sessions", {
-        headers: { Authorization: `${token}` }
-      });
-      if (!resp.ok) throw new Error("Failed to load chat threads");
-      const data = await resp.json();
+      const data = await fetchChatSessions(token);
       setThreads(Array.isArray(data) ? data : []);
     } catch {
       setThreads([]);
@@ -349,50 +307,26 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
     }
   };
 
-  // --- NEW: Fetch all messages for a session ---
-  const fetchMessagesForSession = async (sid: string) => {
+  const fetchMessagesForCurrentSession = async (sid: string) => {
     setIsLoadingMessages(true);
     try {
-      const resp = await fetch(`http://localhost:8000/chat/session/${sid}/messages`, {
-        headers: { Authorization: `${token}` }
-      });
-      if (!resp.ok) throw new Error("Failed to load messages");
-      const data = await resp.json();
-      // API: [{id, role, content, timestamp}]
+      const data = await fetchMessagesForSession(sid, token);
       function cleanContent(raw: string | undefined): string {
         if (!raw) return "";
-
         let content = raw.trim();
-
-        // 1) If the entire value is a valid JSON string literal like "\"Hello\nWorld\"" 
-        //    JSON.parse will convert \n -> actual newline and unescape quotes.
         try {
-          // Only try parse when it *looks* like a quoted JSON string (starts+ends with " or ')
           if (
             (content.startsWith('"') && content.endsWith('"')) ||
             (content.startsWith("'") && content.endsWith("'"))
           ) {
-            // Replace single-quote wrapper with double so JSON.parse works on single-quoted cases
             if (content.startsWith("'") && content.endsWith("'")) {
               content = '"' + content.slice(1, -1).replace(/"/g, '\\"') + '"';
             }
             content = JSON.parse(content);
           }
         } catch (e) {
-          // fallback: we'll unescape common sequences below if JSON.parse fails
+          //
         }
-
-        // // 2) If it's of form <markdown some text here > (text inside the opening tag)
-        // const inlineMatch = content.match(/^<markdown\s+(.*?)>$/i);
-        // if (inlineMatch) {
-        //   content = inlineMatch[1].trim();
-        // } else {
-        //   // 3) If it's of form <markdown>...inner...</markdown>, extract inner
-        //   const betweenMatch = content.match(/^<markdown>([\s\S]*?)<\/markdown>$/i);
-        //   if (betweenMatch) content = betweenMatch[1].trim();
-        // }
-
-        // 4) Final safety: unescape common escape sequences if any remain
         content = content
           .replace(/\\n/g, "\n")
           .replace(/\\r/g, "\r")
@@ -400,17 +334,13 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
           .replace(/\\"/g, '"')
           .replace(/\\'/g, "'")
           .replace(/\\\\/g, "\\");
-
         return content.trim();
       }
-
-      // Usage in your setMessages
       setMessages(
         data
           .filter((m: any) => m.role !== "full_plan")
           .map((m: any) => {
             const cleaned = cleanContent(m.content);
-
             return {
               id: m.id,
               user: m.role === "user_query" ? "me" : "agent",
@@ -422,8 +352,6 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
             };
           })
       );
-
-
     } catch {
       setMessages([]);
     } finally {
@@ -431,36 +359,30 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
     }
   };
 
-  // --- On mount, load threads and init sessionId ---
   useEffect(() => {
     fetchThreads();
   }, [token]);
 
-  // When threads change, auto-select first if none active
   useEffect(() => {
     if (!sessionId && threads.length > 0) {
       setSessionId(threads[0].session_id);
     }
-    // If sessionId does not exist in threads anymore, clear
     if (sessionId && !threads.some(th => th.session_id === sessionId)) {
       setSessionId("");
       setMessages([]);
     }
   }, [threads]);
 
-  // When sessionId changes, load its messages
   useEffect(() => {
     if (sessionId) {
-      fetchMessagesForSession(sessionId);
+      fetchMessagesForCurrentSession(sessionId);
     } else {
       setMessages([]);
     }
   }, [sessionId]);
 
-  // Handle select thread (including new session)
   const handleSelectSession = (sid: string) => {
     if (!sid) {
-      // New session
       const newSid = uuidv4();
       setSessionId(newSid);
       setMessages([]);
@@ -470,9 +392,7 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
     setIntermediateMessages([]);
   };
 
-  // --- WebSocket handling for send/receive ---
   const connectWebSocket = () => {
-    // Assume same ws as before since back compat retained; update ws code if backend ws moves
     ws.current = new WebSocket("ws://localhost:8000/agents/ws");
     ws.current.onopen = () => {
       setIsConnected(true);
@@ -495,7 +415,6 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
         const msg = JSON.parse(event.data);
         const { type, payload } = msg;
         if (type === "session_created") {
-          // can setSessionId(payload.session_id);
           return;
         } else if (type === "response_chunk") {
           const chunk = typeof payload === "object" && payload.chunk ? payload.chunk : JSON.stringify(payload);
@@ -591,7 +510,6 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
       user_id: userId,
     }));
     setInput("");
-    // After message is sent, refresh thread summaries so recency is shown
     setTimeout(fetchThreads, 2000);
   };
 
@@ -608,7 +526,6 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
     }
   };
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -616,10 +533,9 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
     }
   }, [input]);
 
-  // --- Layout with updated thread aware panels ---
   return (
     <div className="chat-3panel-root">
-<ThreadsPanel
+      <ThreadsPanel
         threads={threads}
         activeSessionId={sessionId}
         onSelectSession={handleSelectSession}

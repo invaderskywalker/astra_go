@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from 'react';
 import './styles/learning.css';
+import { fetchLearnings } from "./api";
 
 interface LearningKnowledge {
   id: string;
@@ -32,19 +33,11 @@ const LearningList: React.FC<LearningListProps> = ({ token, userId }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchLearnings = async (type: string) => {
+  const handleFetchLearnings = async (type: string) => {
     setIsLoading(true);
-    let url = `http://localhost:8000/learning/fetch/${userId}`;
-    if (type && type !== 'all') {
-      url = `http://localhost:8000/learning/fetch/${userId}/type/${type}`;
-    }
     try {
       setError(null);
-      const res = await fetch(url, {
-        headers: { 'Authorization': `${token}` }
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await fetchLearnings(token, userId, type);
       setLearnings(data);
     } catch (e: any) {
       setError(e.message || 'Failed to load learnings');
@@ -53,10 +46,8 @@ const LearningList: React.FC<LearningListProps> = ({ token, userId }) => {
       setIsLoading(false);
     }
   };
-
   useEffect(() => {
-    fetchLearnings(filterType);
-    // eslint-disable-next-line
+    handleFetchLearnings(filterType);
   }, [filterType, userId]);
 
   return (
@@ -73,7 +64,7 @@ const LearningList: React.FC<LearningListProps> = ({ token, userId }) => {
           ))}
         </select>
       </div>
-      {isLoading && <div className="learning-list-loading">Loading&hellip;</div>}
+      {isLoading && <div className="learning-list-loading">Loadingâ¦</div>}
       {error && <div className="learning-list-error">{error}</div>}
       <div className="learning-list-items">
         {learnings.length === 0 && !isLoading && !error && (
