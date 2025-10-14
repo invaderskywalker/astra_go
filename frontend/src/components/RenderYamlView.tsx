@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import YAML from "js-yaml";
-import MarkdownPreview from "@uiw/react-markdown-preview";
 
 interface RenderYamlViewProps {
   data: any;

@@ -1,12 +1,12 @@
 import { useState, useEffect, type JSX } from "react";
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
-import Chat from "./Chat";
-import Login from "./Login";
-import Home from "./Home";
-import LearningList from "./LearningList";
-import NotesList from "./NotesList";
+import Chat from "./pages/Chat";
 import './App.css';
 import './styles/markdown.css';
+import Home from "./pages/Home";
+import Login from "./pages/Login";
+import NotesList from "./pages/NotesList";
+import LearningList from "./pages/LearningList";
 
 // Robust state initialization and rehydration on refresh
 function App() {

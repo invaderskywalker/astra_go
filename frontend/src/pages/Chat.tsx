@@ -3,15 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import { v4 as uuidv4 } from 'uuid';
-import './styles/chat.css';
-import RenderJsonTree from "./RenderJsonTree";
+import '../styles/chat.css';
 import { FaTrash } from "react-icons/fa";
 import {
   fetchChatSessions,
   fetchMessagesForSession,
   deleteChatSession
-} from "./api";
-import RenderYamlView from "./components/RenderYamlView";
+} from "../api";
+import RenderYamlView from "../components/RenderYamlView";
 
 function isJsonString(str: string): boolean {
   if (typeof str !== "string") return false;
