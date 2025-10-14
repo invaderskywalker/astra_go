@@ -58,7 +58,7 @@ export function cleanContent(raw: string | undefined): string {
 
 export function getCurrentTime(): string {
   const now = new Date();
-  return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 // Scrolls a ref to bottom smoothly if supported

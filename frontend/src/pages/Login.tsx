@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login as apiLogin } from "../api";
+import "../styles/login.css";
 
 interface LoginProps {
   onLogin: (token: string, userId: number) => void;
@@ -34,23 +35,29 @@ export default function Login({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="login-container">
-      <h2>Login to SimpleChat</h2>
-      <form onSubmit={handleLogin}>
-        <div>
+    <div className="login-outer-bg">
+      <div className="login-card">
+        <h2 className="login-title">Welcome to SimpleChat</h2>
+        <form className="login-form" onSubmit={handleLogin} autoComplete="off">
+          <label htmlFor="username" className="login-label">Username</label>
           <input
+            id="username"
+            className="login-input"
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="Enter username (e.g., abhishek)"
+            placeholder="Enter your username (e.g., abhishek)"
             disabled={loading}
+            autoFocus
+            autoComplete="username"
           />
-        </div>
-        {error && <p style={{ color: "red" }}>{error}</p>}
-        <button type="submit" disabled={loading}>
-          {loading ? "Logging in..." : "Login"}
-        </button>
-      </form>
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <button className="login-btn" type="submit" disabled={loading || !username.trim()}>
+            {loading ? <span className="login-loader"></span> : "Login"}
+          </button>
+        </form>
+      </div>
+      <footer className="login-footer">Â© {new Date().getFullYear()} SimpleChat &mdash; AI Demo App</footer>
     </div>
   );
 }
