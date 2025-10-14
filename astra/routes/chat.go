@@ -3,7 +3,6 @@ package routes
 import (
 	"astra/astra/controllers"
 	"astra/astra/middlewares"
-	"astra/astra/utils/logging"
 	"astra/astra/utils/types"
 	"encoding/json"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
-	"go.uber.org/zap"
 
 	"astra/astra/config"
 )
@@ -19,7 +17,8 @@ import (
 func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router {
 	r := chi.NewRouter()
 	r.Group(func(gr chi.Router) {
-		gr.Use(middlewares.AuthMiddleware(cfg)) // ✅ pass config
+		gr.Use(middlewares.AuthMiddleware(cfg)) // pass config
+		// POST /chat/ : send message
 		gr.Post("/", func(w http.ResponseWriter, r *http.Request) {
 			var req types.ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,11 +33,36 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 			}
 			json.NewEncoder(w).Encode(resp)
 		})
+		// --- NEW: GET /chat/sessions : list all user's sessions (threads)
+		gr.Get("/sessions", func(w http.ResponseWriter, r *http.Request) {
+			userID := r.Context().Value(middlewares.UserIDKey).(int)
+			sessions, err := ctrl.ListSessions(r.Context(), userID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(sessions)
+		})
+		// --- NEW: GET /chat/session/{session_id}/messages : all messages for a session
+		gr.Get("/session/{session_id}/messages", func(w http.ResponseWriter, r *http.Request) {
+			userID := r.Context().Value(middlewares.UserIDKey).(int)
+			sessionID := chi.URLParam(r, "session_id")
+			msgs, err := ctrl.GetMessagesForSession(r.Context(), userID, sessionID)
+			if err != nil {
+				if err.Error() == "session not found or forbidden" {
+					http.Error(w, err.Error(), http.StatusNotFound)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
+			json.NewEncoder(w).Encode(msgs)
+		})
 	})
+	// websocket remains as is
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
-			logging.ErrorLogger.Error("websocket accept error", zap.Error(err))
 			return
 		}
 		defer conn.Close(websocket.StatusInternalError, "internal error")
@@ -46,14 +70,12 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 		ctx := r.Context()
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
-			logging.ErrorLogger.Error("websocket read error", zap.Error(err))
 			return
 		}
 		if typ != websocket.MessageText {
 			conn.Close(websocket.StatusUnsupportedData, "unsupported data")
 			return
 		}
-
 		var input struct {
 			Token       string            `json:"token"`
 			ChatRequest types.ChatRequest `json:"chat_request"`
@@ -64,7 +86,7 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 		}
 
 		token, err := jwt.Parse(input.Token, func(token *jwt.Token) (interface{}, error) {
-			return []byte(cfg.JWTSecret), nil // ✅ use cfg, not LoadConfig
+			return []byte(cfg.JWTSecret), nil
 		})
 		if err != nil || !token.Valid {
 			conn.Write(ctx, websocket.MessageText, []byte(`{"error":"invalid token"}`))
@@ -90,7 +112,6 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 		ch, errCh := ctrl.ChatStream(ctx, userID, input.ChatRequest)
 		go func() {
 			if err := <-errCh; err != nil {
-				logging.ErrorLogger.Error("chat stream error", zap.Error(err))
 				conn.Write(ctx, websocket.MessageText, []byte(`{"error":"`+err.Error()+`"}`))
 				conn.Close(websocket.StatusInternalError, "stream error")
 			}
@@ -98,7 +119,6 @@ func ChatRoutes(ctrl *controllers.ChatController, cfg config.Config) chi.Router 
 
 		for chunk := range ch {
 			if err := conn.Write(ctx, websocket.MessageText, []byte(chunk)); err != nil {
-				logging.ErrorLogger.Error("websocket write error", zap.Error(err))
 				return
 			}
 		}
