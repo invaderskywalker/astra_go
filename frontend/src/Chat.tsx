@@ -102,9 +102,6 @@ function ThreadsPanel({
                 <span className="thread-title">
                   {thread.last_message ? thread.session_id.slice(0, 20) : "(no message yet)"}
                 </span>
-                {/* <span className="thread-meta">
-                  {new Date(thread.last_activity).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </span> */}
                 <button
                   className="thread-delete-btn"
                   title="Delete thread"
@@ -134,6 +131,75 @@ function ThreadsPanel({
   );
 }
 
+// --- Resizable Thought Panel ---
+function ResizableThoughtPanel({ children }: { children: React.ReactNode }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const minWidth = 270;
+  const maxWidth = 600;
+
+  useEffect(() => {
+    const savedWidth = window.localStorage.getItem('thoughtPanelWidth');
+    if (savedWidth) {
+      setWidth(Number(savedWidth));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (width) {
+      window.localStorage.setItem('thoughtPanelWidth', width.toString());
+    }
+  }, [width]);
+
+  const startDrag = (e: React.MouseEvent) => {
+    setDragging(true);
+    document.body.style.cursor = 'col-resize';
+  };
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging || !panelRef.current) return;
+      const parent = panelRef.current.parentElement;
+      if (!parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      const newWidth = parentRect.right - e.clientX;
+      const clamped = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      setWidth(clamped);
+    };
+    const onMouseUp = () => {
+      setDragging(false);
+      document.body.style.cursor = '';
+    };
+    if (dragging) {
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragging]);
+
+  return (
+    <div
+      className="thought-panel-resizable"
+      ref={panelRef}
+      style={width ? { width: width } : {}}
+    >
+      <div
+        className="thought-panel-dragbar"
+        onMouseDown={startDrag}
+        role="separator"
+        aria-orientation="vertical"
+        tabIndex={0}
+        title="Drag to resize"
+      />
+      {children}
+    </div>
+  );
+}
+
 function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) {
   return (
     <div className="thought-panel">
@@ -151,6 +217,8 @@ function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) 
             const parsedData = isJson ? parseMaybeJson(maybeJson) : maybeJson;
             return (
               <div key={i} className="thought-message">
+                {/* TIMESTAMP moved above YAML/thought */}
+                <div className="thought-time thought-time-top">{m.timestamp}</div>
                 <span className="thought-text">
                   {isJson && parsedData ? (
                     <RenderYamlView data={parsedData} />
@@ -158,7 +226,6 @@ function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) 
                     m.text
                   )}
                 </span>
-                <span className="thought-time">{m.timestamp}</span>
               </div>
             );
           })
@@ -556,7 +623,9 @@ export default function Chat({ token, userId, handleLogout }: ChatProps) {
         handleConnect={handleConnect}
         isLoadingMessages={isLoadingMessages}
       />
-      <ThoughtProcessPanel thoughts={intermediateMessages} />
+      <ResizableThoughtPanel>
+        <ThoughtProcessPanel thoughts={intermediateMessages} />
+      </ResizableThoughtPanel>
     </div>
   );
 }

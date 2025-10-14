@@ -272,6 +272,49 @@
 }
 
 /* Thought process panel styles */
+
+/* --- Added for resizable thought panel --- */
+.thought-panel-resizable {
+  position: relative;
+  min-width: 270px;
+  width: 23vw;
+  max-width: 600px;
+  background: inherit;
+  display: flex;
+  flex-direction: column;
+  border-left: 1.5px solid #e9eaf5;
+  height: 100%;
+  z-index: 2;
+  box-shadow: -2px 0 10px 0 rgba(44,62,80,0.05);
+  transition: width 0.12s cubic-bezier(0.6, 0.1, 0.4, 0.85);
+}
+.thought-panel-dragbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  background: linear-gradient(to right, #dbdbe9 65%, #f7f8fa 100%);
+  border-right: 1.5px solid #eaeaf2;
+  z-index: 10;
+  opacity: 0.78;
+  transition: background 0.14s, opacity 0.16s;
+}
+.thought-panel-dragbar:hover, .thought-panel-dragbar:focus {
+  background: linear-gradient(to right, #6465de 80%, #f3f7fa 100%);
+  opacity: 1;
+}
+
+.thought-message .thought-time-top {
+  font-size: 0.93em;
+  color: #888;
+  margin-bottom: 7px;
+  margin-left: 2px;
+  align-self: flex-start;
+  font-weight: 500;
+}
+
 .thought-panel {
   min-width: 270px;
   width: 23vw;
@@ -307,8 +350,8 @@
   border-radius: 9px;
   box-shadow: 0 2px 9px rgba(30,43,90,0.05);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   margin-bottom: 12px;
   min-height: 39px;
 }
