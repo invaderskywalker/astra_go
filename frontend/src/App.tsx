@@ -64,7 +64,7 @@ function App() {
           )}
         </div>
         {token && userId && (
-          <button style={{ marginLeft: '1rem' }} onClick={handleLogout}>Logout</button>
+          <button className="connect-btn" style={{ marginLeft: '1rem' }} onClick={handleLogout}>Logout</button>
         )}
       </nav>
     );

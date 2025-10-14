@@ -11,6 +11,7 @@ import {
   fetchMessagesForSession,
   deleteChatSession
 } from "./api";
+import RenderYamlView from "./components/RenderYamlView";
 
 function isJsonString(str: string): boolean {
   if (typeof str !== "string") return false;
@@ -128,7 +129,7 @@ function ThreadsPanel({
           )}
         </ul>
       )}
-      <button className="thread-new-btn" onClick={() => onSelectSession("")}>+ New Chat</button>
+      <button className="neon-btn thread-new-btn" onClick={() => onSelectSession("")}>+ New Chat</button>
     </div>
   );
 }
@@ -152,7 +153,7 @@ function ThoughtProcessPanel({ thoughts }: { thoughts: IntermediateMessage[] }) 
               <div key={i} className="thought-message">
                 <span className="thought-text">
                   {isJson && parsedData ? (
-                    <RenderJsonTree data={parsedData} />
+                    <RenderYamlView data={parsedData} />
                   ) : (
                     m.text
                   )}

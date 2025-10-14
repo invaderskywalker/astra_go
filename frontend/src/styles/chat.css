@@ -11,6 +11,13 @@
   overflow: hidden;
 }
 
+.thread-new-btn {
+  margin: 16px auto 8px auto;
+  display: block;
+  width: 70%;
+  font-size: 1.1em;
+}
+
 .threads-panel {
   min-width: 220px;
   width: 18vw;
@@ -167,7 +174,8 @@
 }
 
 .msg-bubble {
-  max-width: 62vw;
+  max-width: 85vw;
+  width: 85%;
   padding: 13px 19px;
   border-radius: 20px;
   background: #f4f6fb;
@@ -199,6 +207,7 @@
 }
 
 .message.me .msg-bubble {
+  width: 85%;
   background: #5057fb;
   color: #fff;
   border-bottom-right-radius: 6px;
@@ -210,6 +219,7 @@
 }
 
 .message.agent .msg-bubble {
+  width: 85%;
   border-bottom-left-radius: 6px;
 }
 

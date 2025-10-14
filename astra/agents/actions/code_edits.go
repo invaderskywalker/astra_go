@@ -202,7 +202,7 @@ func (a *DataActions) handleReplace(lines []string, edit CodeEdit) []string {
 
 		endIdx := -1
 		// scan forward, try to match the sequence of endParts
-		for i := startIdx + 1; i < len(lines); i++ {
+		for i := startIdx; i < len(lines); i++ {
 			// if endParts length is 1, do the old fast path
 			if len(endParts) == 1 {
 				if strings.Contains(strings.TrimSpace(lines[i]), endParts[0]) {
@@ -324,6 +324,8 @@ func safeLineMatch(line, target string) bool {
 
 	lineNorm := normalizeLine(line)
 	targetNorm := normalizeTarget(target)
+
+	// fmt.Printf("safeLineMatch: line - %s, target - %s\n", lineNorm, targetNorm)
 
 	if targetNorm == "" {
 		return false

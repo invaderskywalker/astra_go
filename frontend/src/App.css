@@ -10,6 +10,35 @@ html {
   box-sizing: inherit;
 }
 
+/* Shared Neon Button Style */
+.neon-btn {
+  padding: 10px 20px;
+  font-size: 1.28em;
+  border: none;
+  border-radius: 13px;
+  color: white;
+  font-weight: bold;
+  letter-spacing: 0.03em;
+  background: linear-gradient(90deg, var(--neon-primary) 60%, var(--neon-secondary) 100%);
+  box-shadow: 0 0 3px var(--neon-primary), 0 0 7px var(--neon-primary), 0 0 10px var(--neon-secondary), 0 0 14px var(--neon-primary);
+  cursor: pointer;
+  text-shadow: 0 0 3px var(--neon-secondary);
+  transition: box-shadow 0.19s, background 0.15s, transform 0.16s;
+}
+
+.neon-btn:hover, .neon-btn:focus {
+  outline: none;
+  background: linear-gradient(90deg, var(--neon-secondary) 60%, var(--neon-primary) 100%);
+  box-shadow: 0 0 7px var(--neon-secondary), 0 0 16px var(--neon-primary);
+  transform: scale(1.04);
+  filter: brightness(1.04);
+}
+
+.neon-btn:active {
+  filter: brightness(0.98);
+  transform: scale(0.98);
+}
+
 body {
   display: flex;
   flex-direction: column;
@@ -29,6 +58,11 @@ body {
 
 
 :root {
+
+  --neon-primary: #13f0ff;
+  --neon-secondary: #00ffb7;
+  --neon-glow: 0 0 6px var(--neon-primary), 0 0 18px var(--neon-primary), 0 0 30px var(--neon-secondary), 0 0 42px var(--neon-primary);
+
   --body-bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
   --msger-bg: #fff;
   --border: 2px solid #ddd;
