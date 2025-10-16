@@ -10,8 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@fortawesome/fontawesome-free": "^7.1.0",
+    "@mui/icons-material": "^7.3.4",
+    "@mui/material": "^7.3.4",
     "@uiw/react-markdown-preview": "^5.1.5",
+    "dompurify": "^3.3.0",
     "framer-motion": "^12.23.22",
     "js-yaml": "^4.1.0",
     "react": "^19.1.1",
@@ -23,7 +28,7 @@
   "devDependencies": {
     "@eslint/js": "^9.36.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^24.6.2",
+    "@types/node": "^24.8.0",
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.4",

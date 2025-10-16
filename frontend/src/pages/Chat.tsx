@@ -4,7 +4,6 @@
 import React from "react";
 import ThreadsPanel from "../components/ThreadsPanel";
 import ChatPanel from "../components/ChatPanel";
-import ResizableThoughtPanel from "../components/ResizableThoughtPanel";
 import ThoughtProcessPanel from "../components/ThoughtProcessPanel";
 import { useAstraChat } from "../hooks/useAstraChat";
 import "../styles/chat.css";
@@ -15,7 +14,7 @@ interface ChatProps {
   handleLogout: () => void;
 }
 
-const Chat: React.FC<ChatProps> = ({ token, userId, handleLogout }) => {
+const Chat: React.FC<ChatProps> = ({ token, userId }) => {
   const {
     threads,
     isLoadingThreads,
@@ -24,6 +23,7 @@ const Chat: React.FC<ChatProps> = ({ token, userId, handleLogout }) => {
     intermediateMessages,
     input, setInput,
     sendMessage,
+    sendMessageDirect,
     sessionId,
     handleDeleteSession,
     handleSelectSession,
@@ -55,6 +55,7 @@ const Chat: React.FC<ChatProps> = ({ token, userId, handleLogout }) => {
         input={input}
         setInput={setInput}
         sendMessage={sendMessage}
+        sendMessageDirect={sendMessageDirect}
         handleKeyDown={handleKeyDown}
         messagesEndRef={messagesEndRef}
         textareaRef={textareaRef}

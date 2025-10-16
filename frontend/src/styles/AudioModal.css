@@ -1,0 +1,117 @@
+.audio-container {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.7);
+  backdrop-filter: blur(12px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 5000;
+  flex-direction: column;
+  color: #fff;
+}
+
+.close-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  color: white;
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.audio-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  position: relative;
+}
+
+.mic-icon {
+  font-size: 60px;
+  cursor: pointer;
+  color: white;
+  transition: transform 0.3s ease, color 0.3s ease;
+  z-index: 5;
+}
+
+.mic-icon.recording {
+  color: #ff4d4d;
+  transform: scale(1.1);
+}
+
+.status-text {
+  margin-top: 10px;
+  font-size: 1.1rem;
+  letter-spacing: 1px;
+  font-weight: 300;
+  opacity: 0.9;
+}
+
+.ripple-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.ripple {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  transform: scale(0);
+  opacity: 0;
+  animation: ripplePulse 2.5s infinite;
+}
+
+/* Speaking = Blue ripples */
+.ripple-wrapper.speaking .ripple {
+  border-color: rgba(0, 153, 255, 0.4);
+  animation: ripplePulse 1.8s infinite;
+}
+
+/* Recording = Red ripples */
+.ripple-wrapper.recording .ripple {
+  border-color: rgba(255, 77, 77, 0.5);
+  animation: ripplePulse 1.4s infinite;
+}
+
+.ripple:nth-child(2) {
+  animation-delay: 0.6s;
+}
+
+.ripple:nth-child(3) {
+  animation-delay: 1.2s;
+}
+
+@keyframes ripplePulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(2);
+    opacity: 0.1;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.interim-transcript {
+  font-style: italic;
+  color: #b0b0b0;
+  margin-top: 8px;
+  max-width: 300px;
+  text-align: center;
+  word-wrap: break-word;
+}
