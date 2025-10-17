@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
@@ -21,10 +23,32 @@ type GPTClient struct {
 }
 
 func NewGPTClient() *GPTClient {
+	// 1️⃣ First, try to load local .env (for dev runs)
+	_ = godotenv.Load(".env")
+
+	// 2️⃣ Then fallback to global Astra config if API key still missing
 	apiKey := os.Getenv("OPENAI_API_KEY")
+	// fmt.Println("api key ", apiKey)
 	if apiKey == "" {
-		logging.ErrorLogger.Fatal("Missing OPENAI_API_KEY environment variable")
+		home, _ := os.UserHomeDir()
+		envPath := filepath.Join(home, ".astra", ".astra.env")
+		_ = godotenv.Load(envPath)
+		apiKey = os.Getenv("OPENAI_API_KEY")
 	}
+	// fmt.Println("api key ", apiKey)
+
+	// Log which source worked (optional for debugging)
+	if apiKey != "" {
+		fmt.Println("🔑 OpenAI API key loaded successfully.")
+	} else {
+		logging.ErrorLogger.Fatal("Missing OPENAI_API_KEY. Please set it in .env or ~/.astra/.astra.env")
+	}
+
+	// 3️⃣ Fail clearly if key still not found
+	if apiKey == "" {
+		logging.ErrorLogger.Fatal("Missing OPENAI_API_KEY. Please set it in .env or ~/.astra/.astra.env")
+	}
+
 	return &GPTClient{
 		apiKey:  apiKey,
 		baseURL: "https://api.openai.com/v1/chat/completions",

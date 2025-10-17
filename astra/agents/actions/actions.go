@@ -7,6 +7,8 @@ import (
 	"astra/astra/sources/psql/dao"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 
 	"gorm.io/gorm"
@@ -340,12 +342,31 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		Fn:     nil,        // intentionally nil — handled internally in BaseAgent
 	})
 
-	// --- Register learning actions from YAML (atomic, robust) ---
-	knowledgeActionYmlDir := "astra/agents/configs/actions/knowledge"
-	learningActionsYAML, err := configs.LoadActionsYAMLInDir(knowledgeActionYmlDir)
+	execPath, err := os.Executable()
+	if err != nil {
+		panic("❌ Failed to get executable path: " + err.Error())
+	}
+
+	// Go from /usr/local/bin/astra → /Users/.../astra_go/astra/agents/configs/actions/knowledge
+	baseDir := filepath.Dir(execPath)
+
+	// If running from /usr/local/bin, move up to actual source folder
+	// You can adjust this logic if your structure changes later
+	yamlBase := "/Users/abhishekkumar/Documents/projects/llm_apps/astra_go/astra/agents/configs/actions/knowledge"
+	if _, err := os.Stat(yamlBase); err == nil {
+		// preferred absolute path
+	} else {
+		// fallback relative to executable location
+		yamlBase = filepath.Join(baseDir, "..", "agents", "configs", "actions", "knowledge")
+	}
+
+	fmt.Println("📁 Loading YAML configs from:", yamlBase)
+
+	learningActionsYAML, err := configs.LoadActionsYAMLInDir(yamlBase)
 	if err != nil {
 		panic("Failed to load learning actions YAML configs: " + err.Error())
 	}
+
 	// Registration data pairing key, params, and function
 	var longTermKnowledgeRegistrations = []struct {
 		key    string

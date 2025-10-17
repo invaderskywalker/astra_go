@@ -25,34 +25,64 @@ type FetchFileStructureResult struct {
 // FetchFileStructureInRepo runs the `tree` command and captures its output.
 // It automatically includes the `-I` flag for ignored directories.
 func (a *DataActions) FetchFileStructureInRepo(params FetchFileStructureParams) FetchFileStructureResult {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("⚠️ Recovered from panic in FetchFileStructureInRepo: %v\n", r)
+		}
+	}()
+
 	path := params.Path
 	if path == "" {
-		path = "." // default to current directory
+		path = "."
+	}
+
+	// Defensive: if IgnoreDirs is nil, initialize it
+	if params.IgnoreDirs == nil {
+		params.IgnoreDirs = []string{}
 	}
 
 	// Construct ignore pattern for `tree -I`
-	ignorePattern := "venv|node_modules|"
+	ignoreArr := "venv|node_modules"
+	ignorePattern := ignoreArr
 	if len(params.IgnoreDirs) > 0 {
-		ignorePattern = strings.Join(params.IgnoreDirs, "|")
+		ignorePattern = fmt.Sprintf("%s|%s", ignoreArr, strings.Join(params.IgnoreDirs, "|"))
+	}
+
+	// Verify that the tree binary exists
+	treePath, err := exec.LookPath("tree")
+	if err != nil {
+		return FetchFileStructureResult{Error: "the 'tree' command is not installed or not in PATH"}
 	}
 
 	var cmd *exec.Cmd
 	if ignorePattern != "" {
-		cmd = exec.Command("tree", path, "-I", ignorePattern)
+		cmd = exec.Command(treePath, path, "-I", ignorePattern)
 	} else {
-		cmd = exec.Command("tree", path)
+		cmd = exec.Command(treePath, path)
 	}
+
+	fmt.Println("cmd:", cmd.String())
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	err := cmd.Run()
-	if err != nil {
-		return FetchFileStructureResult{Error: fmt.Sprintf("tree command failed: %v\n%s", err, out.String())}
+	// Safely run command
+	if err := cmd.Run(); err != nil {
+		return FetchFileStructureResult{
+			Error: fmt.Sprintf("tree command failed: %v\n%s", err, out.String()),
+		}
 	}
 
-	return FetchFileStructureResult{Structure: out.String()}
+	// Safety: Limit very large output
+	output := out.String()
+	if len(output) > 500000 { // ~500KB limit
+		output = output[:500000] + "\n... (output truncated)"
+	}
+
+	return FetchFileStructureResult{
+		Structure: output,
+	}
 }
 
 // ReadFileParams defines parameters for reading a specific file in the repo.
@@ -142,8 +172,10 @@ func (a *DataActions) GetPWD() (map[string]interface{}, error) {
 		log.Fatalf("Error getting current directory: %v", err)
 	}
 
+	fmt.Println("GetPWD_GetPWD ", dir)
+
 	return map[string]interface{}{
 		"success": true,
-		"output":  dir,
+		"result":  dir,
 	}, nil
 }

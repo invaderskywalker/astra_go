@@ -58,3 +58,9 @@ then i can use it in code..
 
 go install golang.org/x/tools/cmd/godoc@latest
 godoc -http=:8001
+
+
+RELEASE
+go build -o ./astra_cli ./astra/cmd
+sudo mv ./astra_cli /usr/local/bin/astra
+

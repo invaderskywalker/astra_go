@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/joho/godotenv"
 )
@@ -20,8 +21,25 @@ type Config struct {
 	MinIOBucket    string
 }
 
+// LoadConfig loads environment variables in this priority order:
+// 1. Local .env (if exists)
+// 2. Global ~/.astra/.astra.env (fallback)
 func LoadConfig() Config {
-	_ = godotenv.Load(".env")
+	// Try to load local .env first
+	if err := godotenv.Load(".env"); err != nil {
+		// fallback: ~/.astra/.astra.env
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			globalEnvPath := filepath.Join(homeDir, ".astra", ".astra.env")
+			if _, err := os.Stat(globalEnvPath); err == nil {
+				fmt.Println("🔄 Loading global config from:", globalEnvPath)
+				_ = godotenv.Load(globalEnvPath)
+			} else {
+				fmt.Println("⚠️ No global config found at ~/.astra/.astra.env")
+			}
+		}
+	}
+
 	return Config{
 		DBUser:         getEnv("DB_USER", ""),
 		DBPassword:     getEnv("DB_PASSWORD", ""),

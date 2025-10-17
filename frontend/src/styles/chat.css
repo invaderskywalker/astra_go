@@ -309,6 +309,7 @@
   box-sizing: border-box;
   resize: none;
   transition: border 0.16s;
+  max-height: 300px;
 }
 .input-container textarea:focus {
   border: 1.2px solid #3896ff;
