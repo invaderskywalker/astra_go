@@ -1,3 +1,4 @@
+// astra/agents/core/base_agent.go
 package core
 
 import (
@@ -10,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,10 +20,10 @@ import (
 )
 
 const (
-	// DefaultModel     = "llama3:8b"
-	DefaultModel     = "gpt-4.1"
-	DefaultMaxTokens = 10000
-	DefaultTemp      = 0.1
+	DefaultModel       = "gpt-4.1"
+	DefaultMaxTokens   = 10000
+	DefaultTemp        = 0.1
+	NumRecentSummaries = 3 // Number of recent session summaries to inject into context
 )
 
 type BaseAgent struct {
@@ -39,12 +41,15 @@ type BaseAgent struct {
 	responseCh     chan string
 	mu             sync.Mutex
 	chatDAO        *dao.ChatMessageDAO
+	summaryDAO     *dao.SessionSummaryDAO
+	DB             *gorm.DB
 }
 
 func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *BaseAgent {
 	cfg := configs.LoadConfig()
-	// fmt.Printf("cfg loaded: %+v\n", cfg) // Debug print
 	chatDAO := dao.NewChatMessageDAO(db)
+	summaryDAO := dao.NewSessionSummaryDAO(db)
+
 	agent := &BaseAgent{
 		Name:        agentName,
 		TenantID:    userID,
@@ -57,6 +62,8 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 		responseCh:  make(chan string, 10),
 		dataActions: actions.NewDataActions(db, userID),
 		chatDAO:     chatDAO,
+		summaryDAO:  summaryDAO,
+		DB:          db,
 	}
 	logging.AppLogger.Info("BaseAgent initialized",
 		zap.Int("user_id", userID),
@@ -77,8 +84,69 @@ func (a *BaseAgent) handleEvents() {
 	}
 }
 
+// --- SESSION SUMMARY + RECENT SUMMARIES LOGIC ---
+// Generates a short, structured summary given query, roughPlan, execPlans, and results.
+func (a *BaseAgent) GenerateSessionSummary(query string, roughPlan interface{}, execPlans interface{}, results interface{}) string {
+	// Compose a brief summary: request + top-level actions + outcome.
+	// Reduce everything to 2-3 sentences.
+
+	// Extract primary actions (if possible) from the rough plan
+	actions := ""
+	if rp, ok := roughPlan.(map[string]interface{}); ok {
+		if steps, ok := rp["mind_map_steps_in_natural_language"].([]interface{}); ok {
+			strs := make([]string, 0)
+			for _, s := range steps {
+				if sstr, ok := s.(string); ok {
+					strs = append(strs, sstr)
+				}
+			}
+			if len(strs) > 0 {
+				actions = strings.Join(strs, "; ")
+			}
+		}
+	}
+	// Try to identify whether chat execution succeeded or failed
+	outcome := "Success"
+	if resSlice, ok := results.([]map[string]interface{}); ok && len(resSlice) > 0 {
+		for _, step := range resSlice {
+			if r, ok := step["result"].(map[string]interface{}); ok {
+				if ar, ok := r["action_results"].(map[string]interface{}); ok {
+					for _, v := range ar {
+						if entry, ok := v.(map[string]interface{}); ok {
+							if status, ok := entry["status"].(string); ok && status != "ok" {
+								outcome = "Partial or failed: " + status
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if actions == "" {
+		actions = "No actions planned"
+	}
+	content := fmt.Sprintf("Request: %s\nActions: %s\nOutcome: %s", query, actions, outcome)
+	return content
+}
+
+// Fetch N most recent session summaries for this user.
+func (a *BaseAgent) GetRecentSessionSummaries(n int) ([]string, error) {
+	ctx := context.Background()
+	summaries, err := a.summaryDAO.ListRecentSessionSummaries(ctx, a.UserID, n)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0)
+	for _, ss := range summaries {
+		if ss.Summary != "" {
+			result = append(result, fmt.Sprintf("Session (%s): %s", ss.SessionID, ss.Summary))
+		}
+	}
+	return result, nil
+}
+
+// --- PLANNING/PROMPT GENERATION ---
 func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) {
-	// Default error return if something goes wrong
 	defer func() {
 		if r := recover(); r != nil {
 			logging.ErrorLogger.Error("Planning failure", zap.Any("recover", r))
@@ -86,10 +154,16 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		}
 	}()
 
+	// Get recent summaries & inject into context
+	recentSummaries := "No prior session summaries."
+	// if summaries, err := a.GetRecentSessionSummaries(NumRecentSummaries); err == nil && len(summaries) > 0 {
+	// 	recentSummaries = strings.Join(summaries, "\n-----\n")
+	// }
+
 	// Get lightweight action summaries (name + description) from runtime registry
 	actionSummaries := a.dataActions.ListActions()
 
-	// Build the system prompt (inject action summaries)
+	// Build the system prompt (inject recent summaries + action summaries)
 	systemPrompt := fmt.Sprintf(`
 		You are a **planning assistant** 
 		responsible for analyzing user queries 
@@ -98,6 +172,9 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		## Context
 		**Agent Name:** %s  
 		**Agent Role:** %s  
+		**Recent Summaries (last %d):**
+		%s
+
 		**Chat history** %s
 
 		**Available Actions (full description with usage instruction):** 
@@ -108,7 +185,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		## Decision Process
 			**Description:**  
 			%s  
-
 
 		## Your Task
 			Analyze the user query (and conversation context if available) to create an execution plan by:
@@ -128,12 +204,10 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			- Do not include “meta” steps (like understanding, clarifying) in the execution template. 
 			- Only include steps that require concrete actions from the available actions list.
 
-
 		## Output Format Rules
 			- Respond ONLY with a single JSON object. 
-			- DO NOT include natural language, explanations, or markdown fences like.
+			- DO NOT include natural language or markdown fences.
 			- The JSON must exactly follow this schema:
-
 			%s
 
 		## Important Notes
@@ -157,7 +231,9 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		`,
 		a.Config.AgentName,
 		a.Config.AgentRole,
-		a.getHistory(),
+		NumRecentSummaries,
+		recentSummaries,
+		jsonutils.ToJSON(a.getHistory()),
 		jsonutils.ToJSON(actionSummaries),
 		a.Config.DecisionProcess.Description,
 		a.Config.OutputFormats.PlanOutputJSON,
@@ -185,8 +261,6 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		a.Config.OutputFormats.PlanOutputJSON,
 	)
 
-	// print("debug --createRoughPlan- prompt.. ", systemPrompt, user_message)
-
 	req := llm.ChatRequest{
 		Model: DefaultModel,
 		Messages: []llm.Message{
@@ -201,19 +275,16 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	print("resp ...", resp)
-
 	respJSON := jsonutils.ExtractJSON(resp)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
-	// a.storeState("planning", plan)
 	a.RoughPlan = plan
 	return plan
 }
 
+// generateNextExecutionPlan and other methods remain unchanged
 func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
-	// Default error return if something goes wrong
 	defer func() {
 		if r := recover(); r != nil {
 			logging.ErrorLogger.Error("generateNextExecutionPlan failure", zap.Any("recover", r))
@@ -223,7 +294,6 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 
 	fullActions := a.dataActions.ListActions()
 
-	// EXPLICIT DECISION PROCESS RE-INJECTION HERE:
 	systemPrompt := fmt.Sprintf(`
 		You are Astra’s  sequential execution Planner.
 
@@ -292,20 +362,15 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
-
 	a.ExecutionPlans = append(a.ExecutionPlans, plan)
 	return plan
 }
 
 func (a *BaseAgent) ProcessQuery(query string) <-chan string {
-
 	ch := make(chan string)
-
 	a.storeState("user_query", query)
-
 	go func() {
 		defer close(ch)
-
 		// Step 1: Create the rough plan
 		a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
 		roughPlan := a.createRoughPlan(query)
@@ -319,20 +384,13 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		ch <- a.formatEvent("intermediate", map[string]interface{}{
 			"message": "Plan created successfully",
 		})
-
 		ch <- a.formatEvent("intermediate", map[string]interface{}{
 			"message": jsonutils.ToJSON(roughPlan),
 		})
-
 		results := []map[string]interface{}{}
 		stepIndex := 1
-
-		// Step 3: Begin iterative execution loop
 		for {
-
 			a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
-
-			// Generate plan for current step
 			expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
 			if expanded == nil {
 				ch <- a.formatEvent("error", map[string]interface{}{
@@ -346,7 +404,6 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				})
 				return
 			}
-
 			shouldContinue := false
 			if sc, ok := expanded["should_continue"].(bool); ok {
 				shouldContinue = sc
@@ -354,35 +411,26 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			if !shouldContinue {
 				break
 			}
-
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":    "expanded_step",
 				"index":    stepIndex,
 				"expanded": expanded,
 			})
-
-			// Step 4: Execute the plan
 			var planToExec map[string]interface{} = expanded
-
 			step, ok := expanded["next_step"].(map[string]interface{})
 			if !ok {
 				fmt.Println("368 -- err")
 			}
-
 			actionName, _ := step["action"].(string)
 			fmt.Println("action name .. ", actionName)
-
 			if actionName == "" {
 				fmt.Println("breaking no action name")
 				break
 			}
-
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase": "executing_step", "index": stepIndex,
 			})
 			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
-
-			// 🧠 Intercept the internal think-aloud reasoning action
 			if actionName == "think_aloud_reasoning" {
 				var params map[string]interface{}
 				if p, ok := step["action_params"].(map[string]interface{}); ok {
@@ -394,11 +442,9 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 						_ = json.Unmarshal(bytes, &params)
 					}
 				}
-
 				contextInfo := params["context"].(string)
 				goal := params["goal"].(string) + "Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
 				finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
-
 				results = append(results, map[string]interface{}{
 					"step_index":    stepIndex,
 					"executed_plan": planToExec,
@@ -406,33 +452,25 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				})
 				continue
 			}
-
 			fmt.Println("executing plan ... ")
 			execRes := a.executePlan(planToExec)
 			fmt.Println("executed plan ... ")
-			// fmt.Println("result of execution ", execRes)
-
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":   "executed_step",
 				"index":   stepIndex,
 				"execRes": execRes,
 			})
-
 			results = append(results, map[string]interface{}{
 				"step_index":    stepIndex,
 				"executed_plan": planToExec,
 				"result":        execRes,
 			})
-
 		}
-
-		// Persist full plan state before summary/response
 		fullPlan := map[string]interface{}{
 			"rough_plan":      a.RoughPlan,
 			"execution_plans": a.ExecutionPlans,
 		}
 		a.storeState("full_plan", fullPlan)
-
 		// generate  LLM response
 		a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
 		respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
@@ -450,61 +488,57 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			resp += chunk
 			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
 		}
-		// fmt.Println("answer... ", resp)
 		a.storeState("response", resp)
-		//
-
+		// --- SESSION SUMMARY PERSISTENCE ---
+		// a.stepCh <- map[string]interface{}{"message": "Generating and persisting session summary"}
+		// summaryText := a.GenerateSessionSummary(query, roughPlan, a.ExecutionPlans, results)
+		// ctx := context.Background()
+		// _, err = a.summaryDAO.UpsertSessionSummary(ctx, a.SessionID, a.UserID, summaryText)
+		// if err != nil {
+		// 	ch <- a.formatEvent("error", map[string]interface{}{
+		// 		"message": fmt.Sprintf("Failed to upsert session summary: %v", err),
+		// 	})
+		// }
 		ch <- a.formatEvent("completed", map[string]interface{}{
 			"message": "Process completed successfully",
 			"steps":   len(results),
 		})
 	}()
-
 	return ch
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string]interface{}) {
-	// fmt.Println("executePlan.  ", plan)
 	results = map[string]interface{}{
 		"action_results": map[string]interface{}{},
 	}
-
 	step, ok := plan["next_step"].(map[string]interface{})
 	if !ok {
 		return map[string]interface{}{"error": "invalid plan format: missing detailed_plan"}
 	}
-
-	// fetch identifiers and fields safely
 	var stepID string = ""
 	if v, ok := step["step_id"].(string); ok {
 		stepID = v
 	}
 	actionName, _ := step["action"].(string)
-
-	// action_params may be missing or of different type; ensure we pass map[string]interface{}
 	var params map[string]interface{}
 	if p, ok := step["action_params"].(map[string]interface{}); ok {
 		params = p
 	} else {
-		// try marshal/unmarshal to normalize if it's e.g. map[interface{}]interface{} or something else
 		params = map[string]interface{}{}
 		if step["action_params"] != nil {
 			bytes, _ := json.Marshal(step["action_params"])
 			_ = json.Unmarshal(bytes, &params)
 		}
 	}
-
-	// If actionName empty → skip (no-op)
 	if actionName == "" {
 		results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
 			"status": "skipped", "note": "no action specified",
 		}
 		return
 	}
-
-	// Execute the action via dataActions
 	a.stepCh <- map[string]interface{}{"message": "Executing step", "step_id": stepID, "action": actionName}
 	out, err := a.dataActions.ExecuteAction(actionName, params)
+	fmt.Println("a.dataActions.ExecuteAction(actionName, params)", out, err)
 	if err != nil {
 		results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
 			"status": "error",
@@ -512,12 +546,10 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 		}
 		return
 	}
-
 	results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
 		"status": "ok",
 		"output": out,
 	}
-
 	return results
 }
 
@@ -537,48 +569,33 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		Use the provided execution results and context to generate:
 		1) A concise summary of what was done and why (1-3 short points).
 		2) Respond to user query.
-
 		--- Context and artifacts (for your reference) ---
-
 		User Query:
 		%s
-
-
 		Rough plan (the plan the agent created from the query):
 		%s
-
 		All detailed execution plans (detailed steps produced for execution):
 		%s
-
 		Execution results (what ran and observed outputs - use this as the definitive log of what happened):
 		%s
-
-
-
 		---
-
 		Behavior requirements:
 		- Be accurate and concise.
 		- Highlight failures and partial results first.
 		- For each failed or partial item, include a recommended remediation or a short verification step.
 		- If user follow-up / clarification is required, clearly ask the questions.
 		- If everything succeeded, state that the plan completed successfully and summarize the key outputs.
-
 		Now produce the final high quality user-facing response using the above context.
 		`,
-
 		a.Config.AgentName,
 		a.Config.AgentRole,
-		a.getHistory(),
+		jsonutils.ToJSON(a.getHistory()),
 		query,
 		jsonutils.ToJSON(a.RoughPlan),
 		jsonutils.ToJSON(a.ExecutionPlans),
 		jsonutils.ToJSON(results),
 	)
-
-	// The user-facing content will be sent as the "user" message; system prompt contains the context.
 	userMessage := fmt.Sprintf("Please generate the final reply to the user for query: %s Output Format RICH TEXT properly structured", query)
-
 	return llm.ChatRequest{
 		Model: DefaultModel,
 		Messages: []llm.Message{
@@ -590,18 +607,13 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 }
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
-	ctx := context.Background() // You can pass a context with timeout if needed
-
-	// Safely serialize value to JSON for storage
+	ctx := context.Background()
 	contentBytes, err := json.Marshal(value)
 	if err != nil {
 		logging.ErrorLogger.Error("Failed to marshal state value", zap.String("key", key), zap.Error(err))
 		return
 	}
-
 	content := string(contentBytes)
-
-	// Save to DB via ChatMessageDAO
 	_, err = a.chatDAO.SaveMessage(ctx, a.SessionID, a.UserID, key, content)
 	if err != nil {
 		logging.ErrorLogger.Error("Failed to save message", zap.String("key", key), zap.Error(err))
@@ -615,11 +627,8 @@ func (a *BaseAgent) getHistory() []map[string]string {
 		return []map[string]string{}
 	}
 	return history
-
 }
 
-// --- 2) small helper: formatEvent ---
-// Put this method next to other BaseAgent methods.
 func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
 	env := map[string]interface{}{
 		"agent_name": a.Name,
@@ -630,7 +639,6 @@ func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
-		// fallback minimal envelope
 		return fmt.Sprintf(`{"agent_name":"%s","session_id":"%s","type":"%s","payload":"unserializable","timestamp":"%s"}`,
 			a.Name, a.SessionID, eventType, time.Now().UTC().Format(time.RFC3339))
 	}
@@ -643,19 +651,15 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 		"context": contextInfo,
 		"goal":    goal,
 	}
-
 	systemPrompt := fmt.Sprintf(`
         You are Astra's internal reasoning module.
         Before taking a real-world action, you think carefully about what might happen, how to do this action.
-
         Your goal is to reason step-by-step, stream your thought process,
         and finally summarize your decision in one paragraph.
-
         Context: %s
         Goal: %s
 		Thoughtful Mind map - %s
 		Execution on that mind map with results - %s
-
         Behavior:
         - Think out loud.
         - Stream thoughts one by one.
@@ -667,12 +671,9 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 		jsonutils.ToJSON(a.RoughPlan),
 		jsonutils.ToJSON(results),
 	)
-
 	currentDateStr := time.Now().Format("January 2, 2006")
 	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
-
 	userPrompt := datePreamble + " Begin your internal reasoning stream now and if doing code edits. reason clearly what edit , where etc"
-
 	req := llm.ChatRequest{
 		Model: DefaultModel,
 		Messages: []llm.Message{
@@ -681,32 +682,19 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 		},
 		Stream: true,
 	}
-
-	// Start streaming thoughts
 	respCh, err := a.LLM.RunStream(context.Background(), req)
 	if err != nil {
 		a.stepCh <- map[string]interface{}{"message": "thinking stream failed", "error": err.Error()}
 		return "thinking failed"
 	}
-
 	finalThought := ""
 	for chunk := range respCh {
-		// Stream every thought to console + response channel
 		a.responseCh <- chunk
 		finalThought += chunk
 	}
-
 	a.stepCh <- map[string]interface{}{
 		"message":       "Finished thinking",
 		"final_thought": finalThought,
 	}
-
-	// // Optionally save this reasoning trace
-	// a.storeState("internal_thought", map[string]interface{}{
-	// 	"context": contextInfo,
-	// 	"goal":    goal,
-	// 	"thought": finalThought,
-	// })
-
 	return finalThought
 }

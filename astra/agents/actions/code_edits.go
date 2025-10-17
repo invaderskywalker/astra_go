@@ -58,6 +58,17 @@ func (a *DataActions) applyCodeEdits(params ApplyCodeEditsParams) ApplyCodeEdits
 			}
 		}
 		edits[i].File = absFile
+
+		fmt.Println("applyCodeEdits basepath for edit 4", absFile, err)
+
+		if err != nil {
+			return ApplyCodeEditsResult{
+				Error: fmt.Sprintf("failed to resolve absolute path for file %s: %v", edit.File, err),
+			}
+		}
+
+		edits[i].File = absFile
+
 	}
 
 	editsByFile := make(map[string][]CodeEdit)
@@ -114,10 +125,10 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 			}
 		}
 		if !creating {
-			contentStr := strings.Join(lines, "\n")
-			if !strings.Contains(contentStr, "package ") {
-				return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
-			}
+			// contentStr := strings.Join(lines, "\n")
+			// if !strings.Contains(contentStr, "package ") {
+			// 	return fmt.Errorf("sanity check failed: file %s missing 'package' declaration; edit aborted", file)
+			// }
 		}
 	}
 
