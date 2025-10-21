@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,6 +35,21 @@ func main() {
 		dirPath := getWorkingDir()
 		logging.AppLogger.Info("Astra CLI: Connecting in directory", zap.String("dir", dirPath))
 
+		// --- Check for other running Astra processes ---
+		activePaths := detectActiveAstraSessions()
+		if len(activePaths) > 0 {
+			msg := fmt.Sprintf("Astra already active in %d other place(s):\n", len(activePaths))
+			for i, p := range activePaths {
+				msg += fmt.Sprintf("  %d. %s\n", i+1, p)
+			}
+			sendMacNotification("⚡ Astra Active Elsewhere", msg)
+			fmt.Printf("\n⚡ Warning: Astra already running in %d location(s):\n", len(activePaths))
+			for i, p := range activePaths {
+				fmt.Printf("   %d. %s\n", i+1, p)
+			}
+			fmt.Println()
+		}
+
 		// --- DB connection ---
 		db, err := psql.NewDatabase(ctx, cfg)
 		if err != nil {
@@ -53,7 +69,6 @@ func main() {
 			os.Exit(1)
 		}
 		if user == nil {
-			// Not found → create new user
 			email := fmt.Sprintf("%s@astra.local", filepath.Base(dirPath))
 			user, err = userCtrl.CreateUser(ctx, dirPath, email, nil, nil)
 			if err != nil {
@@ -76,6 +91,10 @@ func main() {
 			zap.String("sessionID", sessionID),
 		)
 
+		// --- macOS Notification + Log Session ---
+		sendMacNotification("🚀 Astra Agent Active", fmt.Sprintf("Session started in %s", dirPath))
+		logSession(dirPath, sessionID, user.ID)
+
 		// --- CLI Intro Message ---
 		fmt.Printf("\n🧑‍🚀 Astra is now connected in this directory!\n\n")
 		fmt.Printf("Session: %s\nUser ID: %d\nPath: %s\n\n", sessionID, user.ID, dirPath)
@@ -94,6 +113,7 @@ func main() {
 			}
 			line := strings.TrimSpace(scanner.Text())
 			if line == "exit" || line == "quit" {
+				sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
 				fmt.Println("👋 Goodbye!")
 				break
 			}
@@ -131,10 +151,62 @@ func main() {
 	}
 }
 
+// --- Helper: Get Working Directory ---
 func getWorkingDir() string {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "<unknown>"
 	}
 	return wd
+}
+
+// --- Helper: macOS Notification ---
+func sendMacNotification(title, message string) {
+	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`display notification "%s" with title "%s"`, escapeAppleScript(message), escapeAppleScript(title)))
+	_ = cmd.Run()
+}
+
+// --- Helper: Escape for AppleScript ---
+func escapeAppleScript(s string) string {
+	return strings.ReplaceAll(s, `"`, `\"`)
+}
+
+// --- Helper: Log Session Info ---
+func logSession(dirPath, sessionID string, userID int) {
+	homeDir, _ := os.UserHomeDir()
+	logFile := filepath.Join(homeDir, ".astra_sessions.log")
+
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	entry := fmt.Sprintf("[%s] UserID=%d | Session=%s | Path=%s\n", timestamp, userID, sessionID, dirPath)
+	f.WriteString(entry)
+}
+
+// --- Helper: Detect Other Running Astra Instances ---
+func detectActiveAstraSessions() []string {
+	// 1. Use pgrep to find all running astra processes
+	out, err := exec.Command("pgrep", "-fl", "astra").Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var paths []string
+	for _, line := range lines {
+		if strings.Contains(line, "astra connect") {
+			// try to extract working directory (from command path if possible)
+			parts := strings.Fields(line)
+			for _, p := range parts {
+				if strings.HasPrefix(p, "/") && strings.Contains(p, "astra") {
+					paths = append(paths, filepath.Dir(p))
+					break
+				}
+			}
+		}
+	}
+	return paths
 }

@@ -303,6 +303,20 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 	})
 
 	a.register(ActionSpec{
+		Name:        "frontend_build",
+		Description: "use npm run build to build and check for errors in frontend code",
+		Details: `
+			**Usage Example**
+			{
+				"action": "frontend_build",
+				"action_params": {}
+			}
+		`,
+		Params: struct{}{}, // no params needed
+		Fn:     a.FrontendBuild,
+	})
+
+	a.register(ActionSpec{
 		Name:        "pwd",
 		Description: "Fetch current working directory",
 		Details:     ``,

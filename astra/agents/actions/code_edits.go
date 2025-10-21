@@ -426,3 +426,36 @@ func (a *DataActions) FmtVetBuild() (map[string]interface{}, error) {
 		"output":  strings.Join(outputs, "\n"),
 	}, nil
 }
+
+func (a *DataActions) FrontendBuild() (map[string]interface{}, error) {
+	cmds := [][]string{
+		{"npm", "run", "build"},
+	}
+
+	outputs := []string{}
+
+	for _, cmdArgs := range cmds {
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		cmd.Dir = "." // project root
+		out, err := cmd.CombinedOutput()
+		if len(out) > 0 {
+			outputs = append(outputs, fmt.Sprintf("🔍 %s output:\n%s\n", strings.Join(cmdArgs, " "), string(out)))
+		}
+		if err != nil {
+			failMsg := fmt.Sprintf("❌ %s failed: %v", strings.Join(cmdArgs, " "), err)
+			outputs = append(outputs, failMsg)
+			return map[string]interface{}{
+				"success": false,
+				"output":  strings.Join(outputs, "\n"),
+			}, err
+		}
+	}
+
+	successMsg := "Build output"
+	outputs = append(outputs, successMsg)
+
+	return map[string]interface{}{
+		"success": true,
+		"output":  strings.Join(outputs, "\n"),
+	}, nil
+}
