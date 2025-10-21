@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 // Custom React Hook for managing chat threads, messages, session, and WebSocket for Astra Chat UI
-// -- Enhanced: Now includes text-to-speech (TTS) for reading back agent replies
 import { useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from 'uuid';
 import { fetchChatSessions, fetchMessagesForSession, deleteChatSession } from "../api";
@@ -52,7 +51,8 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // TTS state/refs
+  // TTS state/refs REMOVED
+  /*
   const lastSpokenId = useRef<string | null>(null);
   const speechUtteranceRef = useRef<any>(null);
   const ttsEnabled = true; // Could later be made a user setting
@@ -60,7 +60,7 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
   // ---- TTS Handler with Web Speech API ---- //
   // Only call on new agent message, not on same id chunk updates or user messages
   useEffect(() => {
-    if (!ttsEnabled || typeof window === "undefined" || !('speechSynthesis' in window)) return;
+    if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     if (messages.length === 0) return;
     // Find latest agent reply (not errors, not user, not progress)
     const last = [...messages].reverse().find(m => m.user === "agent" && (!m.type || m.type === "response_chunk"));
@@ -78,25 +78,7 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
     utter.onend = () => {
       speechUtteranceRef.current = null;
       // Emit socket message for TTS done -- strict sync with backend expectations
-      // if (ws.current && ws.current.readyState === WebSocket.OPEN && last && last.id) {
-      //   // ws.current.send(JSON.stringify({
-      //   //   type: "tts_end",
-      //   //   message_id: last.id,
-      //   //   session_id: sessionId,
-      //   //   user_id: userId
-      //   // }));
-      //   ws.current.send(
-      //     JSON.stringify({
-      //       token,
-      //       agent_name: "astra",
-      //       query: "init",
-      //       session_id: sessionId,
-      //       user_id: userId,
-      //     })
-      //   );
-      // }
     };
-
     utter.onerror = () => {
       speechUtteranceRef.current = null;
     };
@@ -104,6 +86,7 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
     window.speechSynthesis.speak(utter);
     lastSpokenId.current = last.id;
   }, [messages]);
+  */
 
   // Thread Operations
   const fetchThreads = async () => {
@@ -264,14 +247,14 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
 
   // Message Operations
   const sendMessage = () => {
-    console.log("[useAstraChat] 📩 sendMessage() called with input:", input);
+    console.log("[useAstraChat] ð© sendMessage() called with input:", input);
     if (!(input.trim())) {
-      console.warn("[useAstraChat] ⚠️ sendMessage aborted — empty input!");
+      console.warn("[useAstraChat] â ï¸ sendMessage aborted â empty input!");
       return;
     }
 
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
-      console.error("[useAstraChat] ❌ WebSocket not connected!");
+      console.error("[useAstraChat] â WebSocket not connected!");
       setMessages((prev) => [
         ...prev,
         {
@@ -285,7 +268,7 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
       return;
     }
 
-    console.log("[useAstraChat] ✅ Sending message through WebSocket:", input);
+    console.log("[useAstraChat] â Sending message through WebSocket:", input);
 
     setMessages((prev) => [
       ...prev,
@@ -307,15 +290,15 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
 
   const sendMessageDirect = (messageText?: string) => {
     const textToSend = (messageText ?? input).trim();
-    console.log("[useAstraChat] 📩 sendMessage() called with text:", textToSend);
+    console.log("[useAstraChat] ð© sendMessage() called with text:", textToSend);
 
     if (!textToSend) {
-      console.warn("[useAstraChat] ⚠️ sendMessage aborted — empty text!");
+      console.warn("[useAstraChat] â ï¸ sendMessage aborted â empty text!");
       return;
     }
 
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
-      console.error("[useAstraChat] ❌ WebSocket not connected!");
+      console.error("[useAstraChat] â WebSocket not connected!");
       setMessages((prev) => [
         ...prev,
         {
@@ -329,7 +312,7 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
       return;
     }
 
-    console.log("[useAstraChat] ✅ Sending message through WebSocket:", textToSend);
+    console.log("[useAstraChat] â Sending message through WebSocket:", textToSend);
 
     setMessages((prev) => [
       ...prev,
@@ -348,8 +331,6 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
     setInput("");
     setTimeout(fetchThreads, 2000);
   };
-
-
 
   // UI/Effects
   useEffect(() => {
@@ -380,9 +361,11 @@ export function useAstraChat({ token, userId }: UseAstraChatParams) {
       setIsConnected(false);
       if (bufferTimeout.current) clearTimeout(bufferTimeout.current);
       // Cancel speech on unmount
+      /*
       if (typeof window !== "undefined" && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
+      */
     };
   }, [token, userId]);
 
