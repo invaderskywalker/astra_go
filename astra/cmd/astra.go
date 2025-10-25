@@ -7,6 +7,7 @@ import (
 	"astra/astra/controllers"
 	"astra/astra/sources/psql"
 	"astra/astra/sources/psql/dao"
+	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
 	"bufio"
 	"context"
@@ -42,10 +43,10 @@ func main() {
 			for i, p := range activePaths {
 				msg += fmt.Sprintf("  %d. %s\n", i+1, p)
 			}
-			sendMacNotification("⚡ Astra Active Elsewhere", msg)
-			fmt.Printf("\n⚡ Warning: Astra already running in %d location(s):\n", len(activePaths))
+			sendMacNotification("Astra Active Elsewhere", msg)
+			fmt.Printf(colorutil.ColorWarning("\nWarning: Astra already running in %d location(s):\n"), len(activePaths))
 			for i, p := range activePaths {
-				fmt.Printf("   %d. %s\n", i+1, p)
+				fmt.Printf(colorutil.ColorWarning("   %d. %s\n"), i+1, p)
 			}
 			fmt.Println()
 		}
@@ -96,25 +97,25 @@ func main() {
 		logSession(dirPath, sessionID, user.ID)
 
 		// --- CLI Intro Message ---
-		fmt.Printf("\n🧑‍🚀 Astra is now connected in this directory!\n\n")
-		fmt.Printf("Session: %s\nUser ID: %d\nPath: %s\n\n", sessionID, user.ID, dirPath)
-		fmt.Println("You can:")
-		fmt.Println("  - Ask for project bootstrapping (e.g., 'Create a new Vite + TS + Three.js frontend here')")
-		fmt.Println("  - Request backend setup, schema generation, or debugging help")
-		fmt.Println("  - Chat about ideas or get coding help with real-time edits\n")
-		fmt.Println("Type your command or 'exit' to quit.\n")
+		fmt.Printf("%s", colorutil.ColorPrompt("\n🧑‍🚀 Astra is now connected in this directory!\n\n"))
+		fmt.Printf(colorutil.ColorInfo("Session: %s\nUser ID: %d\nPath: %s\n\n"), sessionID, user.ID, dirPath)
+		fmt.Println(colorutil.ColorPrompt("You can:"))
+		fmt.Println(colorutil.ColorInfo("  - Ask for project bootstrapping (e.g., 'Create a new Vite + TS + Three.js frontend here')"))
+		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
+		fmt.Println(colorutil.ColorInfo("  - Chat about ideas or get coding help with real-time edits\n"))
+		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit.\n"))
 
 		// --- Input Loop ---
 		scanner := bufio.NewScanner(os.Stdin)
 		for {
-			fmt.Print("astra> ")
+			fmt.Print(colorutil.ColorPrompt("astra> "))
 			if !scanner.Scan() {
 				break // EOF or error
 			}
 			line := strings.TrimSpace(scanner.Text())
 			if line == "exit" || line == "quit" {
 				sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
-				fmt.Println("👋 Goodbye!")
+				fmt.Println(colorutil.ColorPrompt("👋 Goodbye!"))
 				break
 			}
 			if line == "" {
@@ -125,19 +126,45 @@ func main() {
 			for msg := range outputCh {
 				var data map[string]interface{}
 				if err := json.Unmarshal([]byte(msg), &data); err != nil {
-					fmt.Println(msg)
+					// If it's not JSON, just print as is (probably error or fallback)
+					fmt.Print(colorutil.ColorWarning(msg))
 					continue
 				}
-				if data["type"] != "response_chunk" {
-					continue
-				}
-				payload, ok := data["payload"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-				chunk, _ := payload["chunk"].(string)
-				if chunk == "" {
-					continue
+				eventType, _ := data["type"].(string)
+				payload, _ := data["payload"].(map[string]interface{})
+
+				switch eventType {
+				case "error":
+					if payload != nil {
+						if msg, ok := payload["message"].(string); ok {
+							fmt.Println(colorutil.ColorError(msg))
+						} else {
+							fmt.Println(colorutil.ColorError("Error occurred."))
+						}
+					}
+				case "completed":
+					// fmt.Println(colorutil.ColorFinalSuccess("\nProcess completed successfully!"))
+					if payload != nil {
+						if msg, ok := payload["message"].(string); ok {
+							fmt.Println(colorutil.ColorFinalSuccess(msg))
+						}
+					}
+				case "intermediate":
+					// Show intermediate status/plan/step updates
+					if payload != nil {
+						if msg, ok := payload["message"].(string); ok {
+							fmt.Println(colorutil.ColorInfo(msg))
+						}
+					}
+				case "response_chunk":
+					// if payload != nil {
+					// 	if chunk, ok := payload["chunk"].(string); ok {
+					// 		fmt.Print(colorutil.ColorAgentResponse(chunk))
+					// 	}
+					// }
+				default:
+					// fallback: print non-parsable, unexpected event as info
+					// fmt.Println(colorutil.ColorInfo(msg))
 				}
 			}
 			fmt.Println()
@@ -145,8 +172,8 @@ func main() {
 		os.Exit(0)
 
 	} else {
-		fmt.Println("Astra CLI usage:")
-		fmt.Println("  astra connect   # Connect to Astra agent in this directory")
+		fmt.Println(colorutil.ColorPrompt("Astra CLI usage:"))
+		fmt.Println(colorutil.ColorInfo("  astra connect   # Connect to Astra agent in this directory"))
 		os.Exit(1)
 	}
 }
@@ -162,7 +189,7 @@ func getWorkingDir() string {
 
 // --- Helper: macOS Notification ---
 func sendMacNotification(title, message string) {
-	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`display notification "%s" with title "%s"`, escapeAppleScript(message), escapeAppleScript(title)))
+	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`display notification \"%s\" with title \"%s\"`, escapeAppleScript(message), escapeAppleScript(title)))
 	_ = cmd.Run()
 }
 

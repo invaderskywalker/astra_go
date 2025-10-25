@@ -6,6 +6,7 @@ import (
 	"astra/astra/agents/configs"
 	"astra/astra/services/llm"
 	"astra/astra/sources/psql/dao"
+	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
@@ -73,13 +74,17 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 	return agent
 }
 
+// handleEvents now includes colorized output for direct agent prints (step and response)
 func (a *BaseAgent) handleEvents() {
 	for {
 		select {
 		case step := <-a.stepCh:
+			if msg, ok := step["message"].(string); ok {
+				fmt.Println(colorutil.ColorInfo("[Astra Step] " + msg))
+			}
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
 		case resp := <-a.responseCh:
-			fmt.Print(resp, "")
+			fmt.Print(colorutil.ColorAgentResponse(resp))
 		}
 	}
 }
@@ -271,6 +276,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	}
 
 	resp, err := a.LLM.Run(context.Background(), req)
+	// fmt.Println("\nreateRoughPlan plan created --- ", resp)
 	if err != nil {
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
@@ -356,7 +362,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	fmt.Println("\nexec plan created --- ", resp)
+	// fmt.Println("\nexec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
@@ -452,9 +458,9 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				})
 				continue
 			}
-			fmt.Println("executing plan ... ")
+			// fmt.Println("executing plan ... ")
 			execRes := a.executePlan(planToExec)
-			fmt.Println("executed plan ... ")
+			// fmt.Println("executed plan ... ")
 			ch <- a.formatEvent("intermediate", map[string]interface{}{
 				"phase":   "executed_step",
 				"index":   stepIndex,

@@ -3,7 +3,9 @@ package actions
 
 import (
 	"astra/astra/utils/logging"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,9 +16,7 @@ import (
 
 // CodeEdit represents a single code modification operation.
 type CodeEdit struct {
-	Type string `json:"type"` // "create_file", "delete_file", "replace", or "insert"
-	// New edit type - replace_file: replaces the entire file contents in one step
-	// Example: {"type": "replace_file", "file": "foo.go", "replacement": "new contents..." }
+	Type          string `json:"type"`           // "create_file", "delete_file", "update_file"
 	File          string `json:"file"`           // Absolute or relative file path
 	Target        string `json:"target"`         // Target line or block (optional)
 	Start         string `json:"start"`          // Start of block (optional)
@@ -98,23 +98,23 @@ func (a *DataActions) applyCodeEdits(params ApplyCodeEditsParams) ApplyCodeEdits
 // applyEditsToFile applies multiple edits to a single file safely.
 func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	fmt.Println("applyEditsToFile →", file)
-	if os.Getenv("ASTRA_TEST") == "1" {
-		return nil
-	}
+	// if os.Getenv("ASTRA_TEST") == "1" {
+	// 	return nil
+	// }
 
 	if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 		return fmt.Errorf("failed to ensure directory for %s: %w", file, err)
 	}
 
-	content, err := os.ReadFile(file)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read file %s: %w", file, err)
-	}
+	// content, err := os.ReadFile(file)
+	// if err != nil && !os.IsNotExist(err) {
+	// 	return fmt.Errorf("failed to read file %s: %w", file, err)
+	// }
 
-	lines := []string{}
-	if err == nil {
-		lines = strings.Split(string(content), "\n")
-	}
+	// lines := []string{}
+	// if err == nil {
+	// 	lines = strings.Split(string(content), "\n")
+	// }
 
 	if strings.HasSuffix(file, ".go") {
 		creating := false
@@ -133,46 +133,61 @@ func (a *DataActions) applyEditsToFile(file string, edits []CodeEdit) error {
 	}
 
 	for _, edit := range edits {
-		fmt.Println("â applying edit:", edit.Type, "target:", edit.Target, "position:", edit.Position)
+		fmt.Println("applying edit:", edit.Type, "target:", edit.Target, "position:", edit.Position)
 		switch edit.Type {
 		case "create_file":
-			a.createFile(edit.File, edit.Content)
+			a.writeFile(edit.File, edit.Content, "created file")
+		case "update_file_content":
+			a.writeFile(edit.File, edit.Replacement, "updated file")
+		// case "create_file":
+		// 	a.createFile(edit.File, edit.Content)
 		case "delete_file":
 			if err := os.Remove(edit.File); err != nil && !os.IsNotExist(err) {
 				logging.AppLogger.Warn("delete_file failed", zap.String("file", edit.File), zap.Error(err))
 			}
-		case "replace_file":
-			// Replace entire file contents with provided replacement
-			if err := os.WriteFile(edit.File, []byte(edit.Replacement), 0644); err != nil {
-				return fmt.Errorf("failed to replace entire file %s: %w", edit.File, err)
-			}
-			lines = strings.Split(edit.Replacement, "\n")
-		case "replace":
-			lines = a.handleReplace(lines, edit)
-		case "insert":
-			lines = a.handleInsert(lines, edit)
+		// case "update_file_content":
+		// 	// Replace entire file contents with provided replacement
+		// 	if err := os.WriteFile(edit.File, []byte(edit.Replacement), 0644); err != nil {
+		// 		return fmt.Errorf("failed to replace entire file %s: %w", edit.File, err)
+		// 	}
+		// 	lines = strings.Split(edit.Replacement, "\n")
+		// case "replace":
+		// 	lines = a.handleReplace(lines, edit)
+		// case "insert":
+		// 	lines = a.handleInsert(lines, edit)
 		default:
 			logging.AppLogger.Warn("unknown edit type", zap.String("type", edit.Type))
 		}
 	}
 
 	// 🚫 Skip rewriting if the file was just created in this batch
-	created := false
-	for _, e := range edits {
-		if e.Type == "create_file" {
-			created = true
-			break
-		}
-	}
-	if !created {
-		newContent := strings.Join(lines, "\n")
-		if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", file, err)
-		}
-	}
+	// created := false
+	// for _, e := range edits {
+	// 	if e.Type == "create_file" {
+	// 		created = true
+	// 		break
+	// 	}
+	// }
+	// if !created {
+	// 	newContent := strings.Join(lines, "\n")
+	// 	if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
+	// 		return fmt.Errorf("failed to write file %s: %w", file, err)
+	// 	}
+	// }
 
-	_ = exec.Command("go", "fmt", file).Run()
+	// _ = exec.Command("go", "fmt", file).Run()
 	logging.AppLogger.Info("applied edits successfully", zap.String("file", file))
+	return nil
+}
+
+func (a *DataActions) writeFile(file, content string, action string) error {
+	if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		return err
+	}
+	logging.AppLogger.Info(action, zap.String("file", file))
 	return nil
 }
 
@@ -399,27 +414,34 @@ func (a *DataActions) FmtVetBuild() (map[string]interface{}, error) {
 		{"go", "build", "./..."},
 	}
 
-	outputs := []string{}
+	var outputs []string
 
 	for _, cmdArgs := range cmds {
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-		cmd.Dir = "." // project root
+		cmd.Dir = "."
+
 		out, err := cmd.CombinedOutput()
+		output := fmt.Sprintf("🔹 Running: %s\n", strings.Join(cmdArgs, " "))
 		if len(out) > 0 {
-			outputs = append(outputs, fmt.Sprintf("🔍 %s output:\n%s\n", strings.Join(cmdArgs, " "), string(out)))
+			output += fmt.Sprintf("Output:\n%s\n", string(out))
+		} else {
+			output += "(no output)\n"
 		}
+
 		if err != nil {
-			failMsg := fmt.Sprintf("❌ %s failed: %v", strings.Join(cmdArgs, " "), err)
-			outputs = append(outputs, failMsg)
+			output += fmt.Sprintf("❌ Command failed: %v\n", err)
+			outputs = append(outputs, output)
 			return map[string]interface{}{
 				"success": false,
 				"output":  strings.Join(outputs, "\n"),
 			}, err
 		}
+
+		output += "✅ Command succeeded.\n"
+		outputs = append(outputs, output)
 	}
 
-	successMsg := "✅ Go code formatted, vetted, and compiled successfully."
-	outputs = append(outputs, successMsg)
+	outputs = append(outputs, "✅ All Go code formatted, vetted, and compiled successfully.")
 
 	return map[string]interface{}{
 		"success": true,
@@ -428,34 +450,28 @@ func (a *DataActions) FmtVetBuild() (map[string]interface{}, error) {
 }
 
 func (a *DataActions) FrontendBuild() (map[string]interface{}, error) {
-	cmds := [][]string{
-		{"npm", "run", "build"},
+	cmd := exec.Command("npm", "run", "build")
+	cmd.Dir = "." // project root
+
+	var outputBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+
+	fmt.Println("🚀 Starting frontend build...")
+
+	err := cmd.Run()
+
+	result := map[string]interface{}{
+		"output": outputBuf.String(),
 	}
 
-	outputs := []string{}
-
-	for _, cmdArgs := range cmds {
-		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-		cmd.Dir = "." // project root
-		out, err := cmd.CombinedOutput()
-		if len(out) > 0 {
-			outputs = append(outputs, fmt.Sprintf("🔍 %s output:\n%s\n", strings.Join(cmdArgs, " "), string(out)))
-		}
-		if err != nil {
-			failMsg := fmt.Sprintf("❌ %s failed: %v", strings.Join(cmdArgs, " "), err)
-			outputs = append(outputs, failMsg)
-			return map[string]interface{}{
-				"success": false,
-				"output":  strings.Join(outputs, "\n"),
-			}, err
-		}
+	if err != nil {
+		fmt.Printf("❌ Build failed: %v\n", err)
+		result["success"] = false
+		return result, err
 	}
 
-	successMsg := "Build output"
-	outputs = append(outputs, successMsg)
-
-	return map[string]interface{}{
-		"success": true,
-		"output":  strings.Join(outputs, "\n"),
-	}, nil
+	fmt.Println("✅ Frontend build completed successfully.")
+	result["success"] = true
+	return result, nil
 }

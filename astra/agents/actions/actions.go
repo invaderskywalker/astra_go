@@ -51,11 +51,9 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		Description: `
 		Applies intelligent, context-aware code modifications to source files
 		within the Astra repository. Supports:
-		  • insert
-		  • replace
 		  • create_file
 		  • delete_file
-		  • replace_file  ← replaces an entire file atomically.
+		  • update_file_content  ← updates an entire file.
 		Use only when the agent must perform a real code update, never for text generation.
 	`,
 		Details: `
@@ -75,24 +73,8 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		## 🧩 Core Data Structures
 		Each code edit is represented as a JSON object:
 
-		- type: "insert" | "replace" | "create_file" | "delete_file" | "replace_file"
+		- type: "create_file" | "delete_file" | "update_file_content"
 		- file: path to the target file (required)
-
-		### insert
-		Insert new lines before/after a target.
-		Fields:
-		  • target: reference line to locate to insert before or after as posiiton says 
-		  • position: "before" | "after" (default "after")
-		  • content: new content for inserts or new files
-		  • - context_before / context_after: lines near target for safe matching (if multiple places have same target line)
-
-		### replace
-		Update an existing line or block.
-		Fields:
-		  • start / end: block boundaries (this is not line number, this is code line be very mindful of this) (for replace) (must have)
-		  • replacement: content to replace existing code (must have)
-		  • position: "before" | "after" (default "after")
-		  • context_before / context_after: lines near target for safe matching (if multiple places have same start/end block)
 
 		### create_file
 		Create a new file with the given content.
@@ -100,7 +82,7 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		### delete_file
 		Delete a file if it exists.
 
-		### replace_file  ← **New Ability**
+		### update_file_content
 		Atomically replace the entire contents of a file with the given text.
 		Use when performing large rewrites or regenerating code.
 		Skips all target/search logic and directly overwrites the file.
@@ -119,9 +101,29 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		{
 			"edits": [
 				{
-					"type": "replace_file",
+					"type": "update_file_content",
 					"file": "astra/agents/actions/actions.go",
 					"replacement": "// full new contents of the file\npackage actions\n\n..."
+				}
+			]
+		}
+
+		{
+			"edits": [
+				{
+					"type": "create_file",
+					"file": "astra/agents/actions/<>",
+					"content": "// full contents of the file ..."
+				}
+			]
+		}
+
+
+		{
+			"edits": [
+				{
+					"type": "delete_file",
+					"file": "astra/agents/actions/<>",
 				}
 			]
 		}
@@ -133,9 +135,7 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		2. Apply each edit type sequentially:
 		     create_file → new file
 		     delete_file → remove file
-		     replace_file → full overwrite (atomic)
-		     insert / replace → partial modifications
-		3. Run go fmt automatically after edits.
+		     update_file_content → full overwrite (atomic)
 
 		---
 
