@@ -34,14 +34,19 @@ func NotesRoutes(ctrl *controllers.NotesController, cfg config.Config) chi.Route
 		// Create note
 		gr.Post("/", handleNotesJSON(func(r *http.Request) (any, int, error) {
 			var req struct {
-				UserID  int    `json:"user_id"`
-				Title   string `json:"title"`
-				Content string `json:"content"`
+				UserID    int    `json:"user_id"`
+				Title     string `json:"title"`
+				Content   string `json:"content"`
+				Favourite *bool  `json:"favourite"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				return nil, http.StatusBadRequest, err
 			}
-			note, err := ctrl.CreateNote(r.Context(), req.UserID, req.Title, req.Content)
+			favourite := false
+			if req.Favourite != nil {
+				favourite = *req.Favourite
+			}
+			note, err := ctrl.CreateNote(r.Context(), req.UserID, req.Title, req.Content, favourite)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
@@ -79,7 +84,7 @@ func NotesRoutes(ctrl *controllers.NotesController, cfg config.Config) chi.Route
 			return note, http.StatusOK, nil
 		}))
 
-		// Update note
+		// Update note (including favourite)
 		gr.Put("/{id}", handleNotesJSON(func(r *http.Request) (any, int, error) {
 			idStr := chi.URLParam(r, "id")
 			id, err := uuid.Parse(idStr)
@@ -87,8 +92,9 @@ func NotesRoutes(ctrl *controllers.NotesController, cfg config.Config) chi.Route
 				return nil, http.StatusBadRequest, err
 			}
 			var req struct {
-				Title   *string `json:"title"`
-				Content *string `json:"content"`
+				Title     *string `json:"title"`
+				Content   *string `json:"content"`
+				Favourite *bool   `json:"favourite"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				return nil, http.StatusBadRequest, err
@@ -99,6 +105,9 @@ func NotesRoutes(ctrl *controllers.NotesController, cfg config.Config) chi.Route
 			}
 			if req.Content != nil {
 				updates["content"] = *req.Content
+			}
+			if req.Favourite != nil {
+				updates["favourite"] = *req.Favourite
 			}
 			if len(updates) == 0 {
 				return nil, http.StatusBadRequest, nil

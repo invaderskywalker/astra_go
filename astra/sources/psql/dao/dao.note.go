@@ -18,6 +18,9 @@ func NewNoteDAO(db *gorm.DB) *NoteDAO {
 }
 
 func (dao *NoteDAO) CreateNote(ctx context.Context, note *models.Note) error {
+	if note.Favourite == false {
+		// Ensure zero value doesn't cause any surprise; handled by default in DB
+	}
 	return dao.DB.WithContext(ctx).Create(note).Error
 }
 

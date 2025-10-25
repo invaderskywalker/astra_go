@@ -13,6 +13,7 @@ interface Note {
   user_id: number;
   title: string;
   content: string;
+  favourite: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -32,6 +33,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  const [editFavourite, setEditFavourite] = useState<boolean>(false);
   const [updating, setUpdating] = useState(false);
 
   const fetchNotes = async () => {
@@ -46,6 +48,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setIsLoading(false);
     }
   };
+
   useEffect(() => { fetchNotes(); }, [userId]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -53,7 +56,8 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
     if (!newContent.trim()) return;
     setCreating(true);
     try {
-      await apiCreateNote(token, userId, newTitle, newContent);
+      // By default, new notes are not favourite
+      await apiCreateNote(token, userId, newTitle, newContent, false);
       setNewTitle('');
       setNewContent('');
       fetchNotes();
@@ -63,16 +67,25 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setCreating(false);
     }
   };
+
   const startEdit = (note: Note) => {
     setEditingId(note.id);
     setEditTitle(note.title);
     setEditContent(note.content);
+    setEditFavourite(note.favourite);
   };
-  const cancelEdit = () => { setEditingId(null); setEditTitle(''); setEditContent(''); };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditTitle('');
+    setEditContent('');
+    setEditFavourite(false);
+  };
+
   const handleUpdate = async (id: string) => {
     setUpdating(true);
     try {
-      await apiUpdateNote(token, id, editTitle, editContent);
+      await apiUpdateNote(token, id, editTitle, editContent, editFavourite);
       fetchNotes();
       cancelEdit();
     } catch (e: any) {
@@ -81,6 +94,7 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       setUpdating(false);
     }
   };
+
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this note?')) return;
     try {
@@ -88,6 +102,18 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
       fetchNotes();
     } catch (e: any) {
       setError(e.message || 'Failed to delete note');
+    }
+  };
+
+  const toggleFavourite = async (note: Note) => {
+    setUpdating(true);
+    try {
+      await apiUpdateNote(token, note.id, undefined, undefined, !note.favourite);
+      setNotes(notes => notes.map(n => n.id === note.id ? { ...n, favourite: !n.favourite } : n));
+    } catch (e: any) {
+      setError(e.message || 'Failed to toggle favourite');
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -125,7 +151,16 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
           <div className="notes-list-empty">No notes found.</div>
         )}
         {notes.map(note => (
-          <div key={note.id} className={`notes-item${editingId === note.id ? ' editing' : ''}`}>
+          <div key={note.id} className={`notes-item${editingId === note.id ? ' editing' : ''}${note.favourite ? ' favourite' : ''}`}> 
+            <button
+              title={note.favourite ? 'Unfavourite' : 'Mark as favourite'}
+              className={`notes-favourite-btn${note.favourite ? ' starred' : ''}`}
+              onClick={() => toggleFavourite(note)}
+              disabled={updating || creating || editingId === note.id}
+              style={{ fontSize: '1.3em', background: 'none', border: 'none', cursor: 'pointer', color: note.favourite ? '#ffd700' : '#d3d3d3', outline: 'none' }}
+            >
+              {note.favourite ? 'â' : 'â'}
+            </button>
             {editingId === note.id ? (
               <form onSubmit={e => { e.preventDefault(); handleUpdate(note.id); }} className="notes-edit-form">
                 <input
@@ -144,6 +179,15 @@ const NotesList: React.FC<NotesListProps> = ({ token, userId }) => {
                   required
                   disabled={updating}
                 />
+                <label style={{ marginLeft: '1em' }}>
+                  <input
+                    type="checkbox"
+                    checked={editFavourite}
+                    onChange={e => setEditFavourite(e.target.checked)}
+                    disabled={updating}
+                  />
+                  {' '}Favourite
+                </label>
                 <button className="notes-button" type="submit" disabled={updating}>Save</button>
                 <button className="notes-cancel-button" type="button" onClick={cancelEdit} disabled={updating}>Cancel</button>
               </form>

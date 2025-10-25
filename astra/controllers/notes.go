@@ -17,11 +17,12 @@ func NewNotesController(dao *dao.NoteDAO) *NotesController {
 	return &NotesController{dao: dao}
 }
 
-func (c *NotesController) CreateNote(ctx context.Context, userID int, title string, content string) (*models.Note, error) {
+func (c *NotesController) CreateNote(ctx context.Context, userID int, title string, content string, favourite bool) (*models.Note, error) {
 	note := &models.Note{
-		UserID:  userID,
-		Title:   title,
-		Content: content,
+		UserID:    userID,
+		Title:     title,
+		Content:   content,
+		Favourite: favourite,
 	}
 	err := c.dao.CreateNote(ctx, note)
 	if err != nil {

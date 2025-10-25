@@ -14,6 +14,7 @@ type Note struct {
 	User      User      `json:"-" gorm:"foreignKey:UserID;references:ID;constraint:OnDelete:CASCADE"`
 	Title     string    `json:"title" gorm:"type:varchar(255);default:''"`
 	Content   string    `json:"content" gorm:"type:text;not null"`
+	Favourite bool      `json:"favourite" gorm:"not null;default:false"`
 	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }

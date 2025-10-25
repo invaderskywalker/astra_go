@@ -88,6 +88,13 @@ export async function fetchLearnings(token: string, userId: number, type?: strin
 }
 
 // ========== Notes ==========
+export interface NoteApiPayload {
+  user_id?: number;
+  title?: string;
+  content?: string;
+  favourite?: boolean;
+}
+
 export async function fetchNotes(token: string, userId: number) {
   const resp = await fetch(`${API_BASE}/notes/user/${userId}`, {
     headers: { Authorization: token }
@@ -96,27 +103,44 @@ export async function fetchNotes(token: string, userId: number) {
   return await resp.json();
 }
 
-export async function createNote(token: string, userId: number, title: string, content: string) {
+export async function createNote(token: string, userId: number, title: string, content: string, favourite: boolean = false) {
+  const payload: NoteApiPayload = { user_id: userId, title, content, favourite };
   const resp = await fetch(`${API_BASE}/notes/`, {
     method: "POST",
     headers: {
       'Content-Type': 'application/json',
       Authorization: token
     },
-    body: JSON.stringify({ user_id: userId, title, content })
+    body: JSON.stringify(payload)
   });
   if (!resp.ok) throw new Error(await resp.text());
   return await resp.json();
 }
 
-export async function updateNote(token: string, noteId: string, title: string, content: string) {
+/**
+ * updateNote allows to update any of title, content, or favourite. At least one must be provided.
+ */
+export async function updateNote(
+  token: string,
+  noteId: string,
+  title?: string,
+  content?: string,
+  favourite?: boolean
+) {
+  const updates: NoteApiPayload = {};
+  if (typeof title === 'string') updates.title = title;
+  if (typeof content === 'string') updates.content = content;
+  if (typeof favourite === 'boolean') updates.favourite = favourite;
+  if (!updates.title && !updates.content && typeof updates.favourite !== 'boolean') {
+    throw new Error('At least one field (title, content, favourite) must be provided for update');
+  }
   const resp = await fetch(`${API_BASE}/notes/${noteId}`, {
     method: "PUT",
     headers: {
       'Content-Type': 'application/json',
       Authorization: token
     },
-    body: JSON.stringify({ title, content })
+    body: JSON.stringify(updates)
   });
   if (!resp.ok) throw new Error(await resp.text());
   return await resp.json();
