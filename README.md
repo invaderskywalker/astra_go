@@ -5,6 +5,18 @@ find astra -type f -name "*" | while read file; do   echo "====== $file ======";
 
 find astra/agents/actions -type f -name "*" | while read file; do   echo "====== $file ======";   cat "$file";   echo -e "\n"; done
 
+find . \
+  -type d \( -name node_modules -o -name dist -o -name .git -o -name .next -o -name .cache \) -prune -o \
+  -type f ! \( -name ".env" -o -name ".env.*" -o -name "package-lock.json" \) -print | \
+while read -r file; do
+  echo "====== $file ======"
+  if file "$file" | grep -qE 'text|UTF-8'; then
+    cat "$file"
+  else
+    echo "[Binary or non-text file skipped]"
+  fi
+  echo -e "\n"
+done
 
 
 1️⃣ Connect to your database

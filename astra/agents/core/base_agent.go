@@ -362,7 +362,7 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	// fmt.Println("\nexec plan created --- ", resp)
+	fmt.Println("\n exec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
