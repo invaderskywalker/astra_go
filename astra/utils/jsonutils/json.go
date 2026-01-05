@@ -36,12 +36,28 @@ func ExtractJSON(input string) string {
 }
 
 // ToJSON serializes a Go value to a JSON string with indentation.
+// func ToJSON(v interface{}) string {
+// 	bytes, err := json.MarshalIndent(v, "", "  ")
+// 	if err != nil {
+// 		return ""
+// 	}
+// 	return strings.TrimSpace(string(bytes))
+// }
+
 func ToJSON(v interface{}) string {
-	bytes, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+
+	// 🔥 THIS IS THE CRITICAL LINE
+	enc.SetEscapeHTML(false)
+
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(bytes))
+
+	// Important: trim trailing newline added by Encoder
+	return strings.TrimSpace(buf.String())
 }
 
 // CleanJSON trims junk before/after braces and code fences.
@@ -62,40 +78,77 @@ func CleanJSON(input string) string {
 
 // --- NEW FUNCTION ---
 // removeJSONComments removes // comments that are not inside string literals.
+// func removeJSONComments(input string) string {
+// 	var sb strings.Builder
+// 	inString := false
+// 	escaped := false
+
+// 	lines := strings.Split(input, "\n")
+// 	for _, line := range lines {
+// 		cleanLine := ""
+// 		for i := 0; i < len(line); i++ {
+// 			ch := line[i]
+
+// 			// Handle escape in strings
+// 			if ch == '\\' && inString {
+// 				escaped = !escaped
+// 				cleanLine += string(ch)
+// 				continue
+// 			}
+
+// 			if ch == '"' && !escaped {
+// 				inString = !inString
+// 				cleanLine += string(ch)
+// 				continue
+// 			}
+
+// 			// Detect // when not inside string
+// 			if !inString && i+1 < len(line) && ch == '/' && line[i+1] == '/' {
+// 				// stop reading this line at comment start
+// 				break
+// 			}
+
+// 			cleanLine += string(ch)
+// 			escaped = false
+// 		}
+// 		sb.WriteString(strings.TrimRight(cleanLine, " \t"))
+// 		sb.WriteByte('\n')
+// 	}
+
+// 	return sb.String()
+// }
+
 func removeJSONComments(input string) string {
 	var sb strings.Builder
 	inString := false
 	escaped := false
 
-	lines := strings.Split(input, "\n")
-	for _, line := range lines {
-		cleanLine := ""
-		for i := 0; i < len(line); i++ {
-			ch := line[i]
+	for _, line := range strings.Split(input, "\n") {
+		runes := []rune(line)
+		for i := 0; i < len(runes); i++ {
+			ch := runes[i]
 
-			// Handle escape in strings
+			// Handle escape inside string
 			if ch == '\\' && inString {
 				escaped = !escaped
-				cleanLine += string(ch)
+				sb.WriteRune(ch)
 				continue
 			}
 
 			if ch == '"' && !escaped {
 				inString = !inString
-				cleanLine += string(ch)
+				sb.WriteRune(ch)
 				continue
 			}
 
-			// Detect // when not inside string
-			if !inString && i+1 < len(line) && ch == '/' && line[i+1] == '/' {
-				// stop reading this line at comment start
-				break
+			// Detect // comment ONLY outside strings
+			if !inString && ch == '/' && i+1 < len(runes) && runes[i+1] == '/' {
+				break // stop line
 			}
 
-			cleanLine += string(ch)
+			sb.WriteRune(ch)
 			escaped = false
 		}
-		sb.WriteString(strings.TrimRight(cleanLine, " \t"))
 		sb.WriteByte('\n')
 	}
 

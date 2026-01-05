@@ -356,6 +356,30 @@ func NewDataActions(db *gorm.DB, userId int) *DataActions {
 		Fn:     nil,        // intentionally nil — handled internally in BaseAgent
 	})
 
+	a.register(ActionSpec{
+		Name:        "read_image_with_vision",
+		Description: "Reads local image files and uses a vision-capable LLM to describe their contents.",
+		Details: `
+		# 👁️ Astra Vision Image Reader
+
+		This action reads image files from local disk and sends them
+		to a vision-capable LLM for visual understanding.
+
+		Use this when:
+		- User provides screenshots
+		- Diagrams need explanation
+		- UI, charts, or architecture images are involved
+
+		## Input
+		{
+			"image_paths": ["./tmp/img1.png"],
+			"user_instruction": "Describe layout and issues",
+		}
+	`,
+		Params: ReadImageWithVisionParams{},
+		Fn:     nil,
+	})
+
 	execPath, err := os.Executable()
 	if err != nil {
 		panic("❌ Failed to get executable path: " + err.Error())

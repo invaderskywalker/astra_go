@@ -46,14 +46,45 @@ type ChatRequest struct {
 	Options  interface{} `json:"options,omitempty"`
 }
 
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
+// type Message struct {
+// 	Role    string `json:"role"`
+// 	Content string `json:"content"`
+// }
 
+type Message struct {
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
 type ChatResponse struct {
 	Message Message `json:"message"`
 	Done    bool    `json:"done"`
+}
+
+func extractTextContent(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+
+	case []interface{}:
+		// OpenAI style multimodal / block content
+		var sb strings.Builder
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if t, ok := m["text"].(string); ok {
+					sb.WriteString(t)
+				}
+			}
+		}
+		return sb.String()
+
+	case map[string]interface{}:
+		// Defensive: sometimes models wrap content
+		if t, ok := v["text"].(string); ok {
+			return t
+		}
+	}
+
+	return ""
 }
 
 // -----------------------------
@@ -66,7 +97,8 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 	if err := httputils.PostJSON(c.baseURL+"/chat", req, &resp); err != nil {
 		return "", err
 	}
-	return resp.Message.Content, nil
+	return extractTextContent(resp.Message.Content), nil
+	// return resp.Message.Content, nil
 }
 
 // -----------------------------
@@ -134,13 +166,22 @@ func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan s
 				return
 			}
 
-			if chunk.Message.Content != "" {
+			// if chunk.Message.Content != "" {
+			// 	select {
+			// 	case ch <- chunk.Message.Content:
+			// 	case <-ctx.Done():
+			// 		return
+			// 	}
+			// }
+			text := extractTextContent(chunk.Message.Content)
+			if text != "" {
 				select {
-				case ch <- chunk.Message.Content:
+				case ch <- text:
 				case <-ctx.Done():
 					return
 				}
 			}
+
 		}
 	}()
 

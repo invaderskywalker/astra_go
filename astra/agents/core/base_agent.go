@@ -10,11 +10,14 @@ import (
 	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -282,6 +285,10 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 	}
 
 	respJSON := jsonutils.ExtractJSON(resp)
+	// 🔥 ADD THIS
+	// if !utf8.ValidString(respJSON) {
+	// 	respJSON = strings.ToValidUTF8(respJSON, "")
+	// }
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
@@ -362,9 +369,10 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	fmt.Println("\n exec plan created --- ", resp)
+	// fmt.Println("\n exec plan created --- ", resp)
 
 	respJSON := jsonutils.ExtractJSON(resp)
+	fmt.Println("\n exec plan created extracted json --- ", respJSON)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
@@ -458,6 +466,32 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				})
 				continue
 			}
+			if actionName == "read_image_with_vision" {
+				var params actions.ReadImageWithVisionParams
+
+				// decode params safely
+				if p, ok := step["action_params"].(map[string]interface{}); ok {
+					bytes, _ := json.Marshal(p)
+					_ = json.Unmarshal(bytes, &params)
+				}
+
+				a.stepCh <- map[string]interface{}{
+					"message": "Reading image(s) with vision",
+					"count":   len(params.ImagePaths),
+				}
+
+				visionResults := a.readImageWithVision(params)
+
+				results = append(results, map[string]interface{}{
+					"step_index":    stepIndex,
+					"executed_plan": planToExec,
+					"result": map[string]interface{}{
+						"vision_results": visionResults,
+					},
+				})
+
+				continue
+			}
 			// fmt.Println("executing plan ... ")
 			execRes := a.executePlan(planToExec)
 			// fmt.Println("executed plan ... ")
@@ -489,10 +523,31 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			return
 		}
 		resp := ""
+		var utf8Buf string
+
 		for chunk := range respCh {
-			a.responseCh <- chunk
-			resp += chunk
-			ch <- a.formatEvent("response_chunk", map[string]interface{}{"chunk": chunk})
+			utf8Buf += chunk
+
+			for utf8.ValidString(utf8Buf) {
+				last := len(utf8Buf)
+				for last > 0 && !utf8.ValidString(utf8Buf[:last]) {
+					last--
+				}
+				if last == 0 {
+					break
+				}
+
+				safe := utf8Buf[:last]
+				utf8Buf = utf8Buf[last:]
+
+				// console (optional)
+				a.responseCh <- safe
+
+				// websocket
+				ch <- a.formatEvent("response_chunk", map[string]interface{}{
+					"chunk": safe,
+				})
+			}
 		}
 		a.storeState("response", resp)
 		// --- SESSION SUMMARY PERSISTENCE ---
@@ -543,6 +598,7 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 		return
 	}
 	a.stepCh <- map[string]interface{}{"message": "Executing step", "step_id": stepID, "action": actionName}
+	fmt.Println("executePlan ", actionName, params)
 	out, err := a.dataActions.ExecuteAction(actionName, params)
 	fmt.Println("a.dataActions.ExecuteAction(actionName, params)", out, err)
 	if err != nil {
@@ -703,4 +759,114 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 		"final_thought": finalThought,
 	}
 	return finalThought
+}
+
+func (a *BaseAgent) readImageWithVision(
+	params actions.ReadImageWithVisionParams,
+) []actions.VisionImageResult {
+
+	results := make([]actions.VisionImageResult, 0, len(params.ImagePaths))
+
+	for _, imagePath := range params.ImagePaths {
+		res := actions.VisionImageResult{
+			ImagePath:  imagePath,
+			VisionUsed: true,
+		}
+
+		data, err := os.ReadFile(imagePath)
+		if err != nil {
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+
+		imageB64 := base64.StdEncoding.EncodeToString(data)
+
+		fmt.Println("Image bytes:", len(data))
+
+		systemPrompt := `
+			You are a visual perception assistant.
+
+			Your task is to DESCRIBE what is visible in the image.
+			Do NOT infer intent, function, or business meaning.
+			Do NOT guess labels, components, or relationships
+			unless they are explicitly visible.
+
+			Allowed:
+			- Describe shapes, boxes, arrows, lines
+			- Transcribe visible text exactly as shown
+			- Describe spatial relationships (above, connected to, grouped)
+			- Describe flow direction if arrows exist
+			- State uncertainty clearly
+
+			Disallowed:
+			- Interpretation or analysis
+			- Optimization suggestions
+			- Assumptions about architecture or domain
+			- Conclusions or recommendations
+
+			Output rules:
+			- Plain text only
+			- Bullet points allowed
+			- No markdown
+			- No speculation
+		`
+
+		userInstruction := params.UserInstruction
+		if userInstruction == "" {
+			userInstruction = "Describe what you see in this image."
+		}
+		// userContent := []map[string]interface{}{
+		// 	{
+		// 		"type": "text",
+		// 		"text": userInstruction,
+		// 	},
+		// 	{
+		// 		"type": "image_url",
+		// 		"image_url": map[string]string{
+		// 			"url": "data:image/png;base64," + imageB64,
+		// 		},
+		// 	},
+		// }
+		// userContentBytes, _ := json.Marshal(userContent)
+
+		req := llm.ChatRequest{
+			Model: "gpt-4.1-mini",
+			Messages: []llm.Message{
+				{
+					Role:    "system",
+					Content: systemPrompt,
+				},
+				{
+					Role: "user",
+					Content: []map[string]interface{}{
+						{
+							"type": "text",
+							"text": userInstruction,
+						},
+						{
+							"type": "image_url",
+							"image_url": map[string]string{
+								"url": "data:image/jpeg;base64," + imageB64,
+							},
+						},
+					},
+				},
+			},
+			Stream: false,
+		}
+
+		resp, err := a.LLM.Run(context.Background(), req)
+		if err != nil {
+			res.Error = err.Error()
+		} else {
+			res.VisionDescription = resp
+		}
+
+		fmt.Println("resp vison read .. ", resp)
+
+		results = append(results, res)
+	}
+
+	return results
 }
