@@ -5,11 +5,12 @@ import { fetchLearnings } from "../api";
 
 interface LearningKnowledge {
   id: string;
-  knowledge_type: string;
-  knowledge_blob?: string;
-  content?: string;
+	kind: string;
+	title: string;
+	summary?: string;
+	content: string;
+	tags?: string[];
   created_at: string;
-  user_id: number;
 }
 
 interface LearningListProps {
@@ -72,8 +73,9 @@ const LearningList: React.FC<LearningListProps> = ({ token, userId }) => {
         )}
         {learnings.map(lk => (
           <div className="learning-item" key={lk.id}>
-            <div className="learning-type-tag">{lk.knowledge_type}</div>
-            <div className="learning-content">{lk.knowledge_blob || lk.content}</div>
+			<div className="learning-type-tag">{lk.kind}</div>
+			<h3>{lk.title}</h3>
+			<div className="learning-content">{lk.summary || lk.content}</div>
             <div className="learning-meta">
               <span className="learning-date">{new Date(lk.created_at).toLocaleString()}</span>
             </div>

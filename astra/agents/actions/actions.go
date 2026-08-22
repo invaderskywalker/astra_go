@@ -3,7 +3,10 @@ package actions
 
 import (
 	"astra/astra/agents/workspace"
-	"astra/astra/sources/psql/dao"
+	"astra/astra/config"
+	"astra/astra/sources/mindpalace"
+	"astra/astra/sources/storage"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -16,11 +19,11 @@ type ActionHandler func(map[string]any) ActionResult
 
 // DataActions is a thin adapter between the planner and repository/database tools.
 type DataActions struct {
-	actions              map[string]ActionSpec
-	db                   *gorm.DB
-	UserID               int
-	longTermKnowledgeDao *dao.LongTermKnowledgeDAO
-	workspace            *workspace.Workspace
+	actions   map[string]ActionSpec
+	db        *gorm.DB
+	UserID    int
+	memory    *mindpalace.Store
+	workspace *workspace.Workspace
 }
 
 type ActionSummary struct {
@@ -39,11 +42,20 @@ type ActionSpec struct {
 }
 
 func NewDataActions(db *gorm.DB, userID int) *DataActions {
+	return NewDataActionsForSession(db, userID, "")
+}
+
+func NewDataActionsForSession(db *gorm.DB, userID int, sessionID string) *DataActions {
 	ws, err := workspace.NewWorkspace("")
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
 	}
-	a := &DataActions{actions: make(map[string]ActionSpec), db: db, UserID: userID, longTermKnowledgeDao: dao.NewLongTermKnowledgeDAO(db), workspace: ws}
+	cfg := config.LoadConfig()
+	mirror, mirrorErr := storage.NewMinIOClient(cfg)
+	if mirrorErr != nil {
+		mirror = nil
+	}
+	a := &DataActions{actions: make(map[string]ActionSpec), db: db, UserID: userID, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID, mirror)}
 	a.registerCoreActions()
 	a.registerKnowledgeActions()
 	return a
@@ -85,6 +97,10 @@ func (a *DataActions) ListActionSummaries() []ActionSummary {
 		result = append(result, ActionSummary{Name: spec.Name, Description: spec.Description})
 	}
 	return result
+}
+
+func (a *DataActions) RecordSessionEvent(eventType string, payload any) {
+	_, _ = a.memory.AppendSessionEvent(context.Background(), eventType, payload)
 }
 
 // ExecuteAction never exposes reflection or arbitrary return values to callers.

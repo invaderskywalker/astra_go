@@ -42,17 +42,40 @@ func NewMinIOClient(cfg config.Config) (*MinIOClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Create bucket if not exists
-	exists, err := client.BucketExists(context.Background(), bucket)
+	return &MinIOClient{client: client, bucket: bucket}, nil
+}
+
+func (m *MinIOClient) ensureBucket(ctx context.Context) error {
+	exists, err := m.client.BucketExists(ctx, m.bucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := m.client.MakeBucket(ctx, m.bucket, minio.MakeBucketOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *MinIOClient) PutObject(ctx context.Context, key string, data []byte, contentType string) error {
+	if err := m.ensureBucket(ctx); err != nil {
+		return err
+	}
+	_, err := m.client.PutObject(ctx, m.bucket, key, strings.NewReader(string(data)), int64(len(data)), minio.PutObjectOptions{ContentType: contentType})
+	return err
+}
+
+func (m *MinIOClient) GetObjectBytes(ctx context.Context, key string) ([]byte, error) {
+	if err := m.ensureBucket(ctx); err != nil {
+		return nil, err
+	}
+	obj, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		if err := client.MakeBucket(context.Background(), bucket, minio.MakeBucketOptions{}); err != nil {
-			return nil, err
-		}
-	}
-	return &MinIOClient{client: client, bucket: bucket}, nil
+	defer obj.Close()
+	return io.ReadAll(obj)
 }
 
 func (m *MinIOClient) UploadScrape(ctx context.Context, url, text, metadata string) (string, error) {
@@ -72,8 +95,7 @@ func (m *MinIOClient) UploadScrape(ctx context.Context, url, text, metadata stri
 	}
 
 	// Upload
-	_, err = m.client.PutObject(ctx, m.bucket, key, io.NopCloser(strings.NewReader(string(data))), int64(len(data)), minio.PutObjectOptions{ContentType: "application/json"})
-	if err != nil {
+	if err = m.PutObject(ctx, key, data, "application/json"); err != nil {
 		return "", err
 	}
 
@@ -81,12 +103,7 @@ func (m *MinIOClient) UploadScrape(ctx context.Context, url, text, metadata stri
 }
 
 func (m *MinIOClient) GetScrape(ctx context.Context, key string) (string, error) {
-	obj, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
-	if err != nil {
-		return "", err
-	}
-	defer obj.Close()
-	data, err := io.ReadAll(obj)
+	data, err := m.GetObjectBytes(ctx, key)
 	if err != nil {
 		return "", err
 	}

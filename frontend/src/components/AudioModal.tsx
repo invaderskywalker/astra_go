@@ -7,7 +7,7 @@ import "../styles/AudioModal.css";
 interface AudioModalProps {
   open: boolean;
   onClose: () => void;
-  setInput: (val: string) => void;
+	setInput: (value: string) => void;
   onVoiceSend: (finalText: string) => void;
   isSpeaking?: boolean;
 }
@@ -27,9 +27,9 @@ const AudioModal: React.FC<AudioModalProps> = ({
 
   // ---- REFS ----
   const recognitionRef = useRef<any>(null);
-  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const silenceCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+	const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const silenceCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const finalTextRef = useRef("");
   const lastSpeechTimeRef = useRef<number>(0);
   const isRecordingRef = useRef(false);
@@ -155,7 +155,7 @@ const AudioModal: React.FC<AudioModalProps> = ({
       if (finalText.trim()) {
         finalTextRef.current += " " + finalText.trim();
         log("📝 Final text accumulated:", finalTextRef.current);
-        setInput((prev) => (prev ? prev + " " : "") + finalText.trim());
+		setInput(finalTextRef.current.trim());
         setInterimTranscript("");
       }
     };

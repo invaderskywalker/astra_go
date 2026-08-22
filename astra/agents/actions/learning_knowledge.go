@@ -1,72 +1,72 @@
 package actions
 
 import (
-	"astra/astra/sources/psql/models"
+	"astra/astra/sources/mindpalace"
 	"context"
 	"fmt"
-	"github.com/google/uuid"
+	"strings"
 )
 
-type CreateLongTermKnowledgeParams struct {
-	KnowledgeType string `json:"knowledge_type"`
-	KnowledgeBlob string `json:"knowledge_blob"`
+type SaveMemoryParams struct {
+	ID      string   `json:"id,omitempty"`
+	Kind    string   `json:"kind"`
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Content string   `json:"content"`
+	Tags    []string `json:"tags,omitempty"`
+	Related []string `json:"related,omitempty"`
 }
-type UpdateLongTermKnowledgeParams struct {
-	ID      string         `json:"id"`
-	Updates map[string]any `json:"updates"`
+type SearchMemoryParams struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
 }
-type GetAllLongTermKnowledgeByTypeParams struct {
-	KnowledgeType string `json:"knowledge_type"`
+type ListMemoryParams struct {
+	Kind string `json:"kind,omitempty"`
 }
-
-func (a *DataActions) CreateLongTermKnowledgeAction(p CreateLongTermKnowledgeParams) ActionResult {
-	if p.KnowledgeType == "" || p.KnowledgeBlob == "" {
-		return ActionResult{Success: false, Error: "knowledge_type and knowledge_blob are required"}
-	}
-	item := models.LongTermKnowledge{UserID: a.UserID, KnowledgeType: p.KnowledgeType, KnowledgeBlob: p.KnowledgeBlob}
-	if err := a.longTermKnowledgeDao.CreateLongTermKnowledge(context.Background(), &item); err != nil {
-		return ActionResult{Success: false, Error: err.Error()}
-	}
-	return ActionResult{Success: true, Summary: "Knowledge saved"}
+type LinkMemoryParams struct {
+	FromID string `json:"from_id"`
+	ToID   string `json:"to_id"`
 }
 
-func (a *DataActions) UpdateLongTermKnowledgeAction(p UpdateLongTermKnowledgeParams) ActionResult {
-	id, err := uuid.Parse(p.ID)
-	if err != nil {
-		return ActionResult{Success: false, Error: fmt.Sprintf("invalid knowledge id: %v", err)}
+func (a *DataActions) SaveMemory(params SaveMemoryParams) ActionResult {
+	if strings.TrimSpace(params.Kind) == "" || strings.TrimSpace(params.Title) == "" || strings.TrimSpace(params.Content) == "" {
+		return ActionResult{Success: false, Error: "kind, title, and content are required"}
 	}
-	if err := a.longTermKnowledgeDao.UpdateLongTermKnowledge(context.Background(), id, p.Updates); err != nil {
+	record, warnings, err := a.memory.Save(context.Background(), mindpalace.Record{ID: params.ID, Kind: params.Kind, Title: params.Title, Summary: params.Summary, Content: params.Content, Tags: params.Tags, Related: params.Related})
+	if err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
-	return ActionResult{Success: true, Summary: "Knowledge updated"}
+	return ActionResult{Success: true, Summary: "Memory saved: " + record.ID, Diagnostics: record, Artifacts: []string{record.ID}, Warnings: warnings}
 }
 
-func (a *DataActions) GetAllLongTermKnowledgeForUserAction(_ struct{}) ActionResult {
-	items, err := a.longTermKnowledgeDao.GetAllLongTermKnowledgeByUser(context.Background(), a.UserID)
+func (a *DataActions) SearchMemory(params SearchMemoryParams) ActionResult {
+	if strings.TrimSpace(params.Query) == "" {
+		return ActionResult{Success: false, Error: "query is required"}
+	}
+	records, err := a.memory.Search(params.Query, params.Limit)
 	if err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
-	return ActionResult{Success: true, Summary: fmt.Sprintf("Found %d knowledge item(s)", len(items)), Diagnostics: items}
+	return ActionResult{Success: true, Summary: fmt.Sprintf("Found %d memory block(s)", len(records)), Diagnostics: records}
 }
-func (a *DataActions) GetAllLongTermKnowledgeForUserByTypeAction(p GetAllLongTermKnowledgeByTypeParams) ActionResult {
-	items, err := a.longTermKnowledgeDao.GetLongTermKnowledgeByKnowledgeType(context.Background(), a.UserID, p.KnowledgeType)
+func (a *DataActions) ListMemory(params ListMemoryParams) ActionResult {
+	records, err := a.memory.List(params.Kind)
 	if err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
-	return ActionResult{Success: true, Summary: fmt.Sprintf("Found %d knowledge item(s)", len(items)), Diagnostics: items}
+	return ActionResult{Success: true, Summary: fmt.Sprintf("Listed %d memory block(s)", len(records)), Diagnostics: records}
 }
-func (a *DataActions) GetAllKnowledgeTypesForUser(_ struct{}) ActionResult {
-	types, err := a.longTermKnowledgeDao.GetDistinctKnowledgeTypes(context.Background(), a.UserID)
+func (a *DataActions) LinkMemory(params LinkMemoryParams) ActionResult {
+	warnings, err := a.memory.Link(context.Background(), params.FromID, params.ToID)
 	if err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
-	return ActionResult{Success: true, Summary: fmt.Sprintf("Found %d knowledge type(s)", len(types)), Diagnostics: types}
+	return ActionResult{Success: true, Summary: "Memory link created", Warnings: warnings}
 }
 
 func (a *DataActions) registerKnowledgeActions() {
-	a.register(ActionSpec{Name: "create_long_term_knowledge", Description: "Saves durable user knowledge.", Guidance: "Save only useful, non-sensitive facts supplied by the user.", Params: CreateLongTermKnowledgeParams{}, handler: decodeHandler(a.CreateLongTermKnowledgeAction)})
-	a.register(ActionSpec{Name: "update_long_term_knowledge", Description: "Updates an existing saved knowledge item.", Guidance: "Use only with a known knowledge item id.", Params: UpdateLongTermKnowledgeParams{}, handler: decodeHandler(a.UpdateLongTermKnowledgeAction)})
-	a.register(ActionSpec{Name: "list_long_term_knowledge", Description: "Lists the user's saved knowledge.", Guidance: "Use when existing user preferences or facts may be relevant.", Params: struct{}{}, handler: decodeHandler(a.GetAllLongTermKnowledgeForUserAction)})
-	a.register(ActionSpec{Name: "list_long_term_knowledge_by_type", Description: "Lists saved knowledge in one category.", Guidance: "Use a specific type to reduce unnecessary context.", Params: GetAllLongTermKnowledgeByTypeParams{}, handler: decodeHandler(a.GetAllLongTermKnowledgeForUserByTypeAction)})
-	a.register(ActionSpec{Name: "list_knowledge_types", Description: "Lists available saved-knowledge categories.", Guidance: "Use before querying a category whose name is unknown.", Params: struct{}{}, handler: decodeHandler(a.GetAllKnowledgeTypesForUser)})
+	a.register(ActionSpec{Name: "save_memory", Description: "Creates or updates a linked, durable file-backed memory block.", Guidance: "Store durable facts, decisions, project conventions, or learned preferences as concise Markdown content. Link to related IDs when known; do not save raw conversation transcripts as memory.", Params: SaveMemoryParams{}, handler: decodeHandler(a.SaveMemory)})
+	a.register(ActionSpec{Name: "search_memory", Description: "Searches the current user's file-backed mind palace.", Guidance: "Search before asking the user for information that may already be remembered. Read only returned blocks relevant to the current task.", Params: SearchMemoryParams{}, handler: decodeHandler(a.SearchMemory)})
+	a.register(ActionSpec{Name: "list_memory", Description: "Lists memory blocks, optionally by kind.", Guidance: "Use only to orient yourself or when a focused search query is unavailable.", Params: ListMemoryParams{}, handler: decodeHandler(a.ListMemory)})
+	a.register(ActionSpec{Name: "link_memory", Description: "Creates a directed link between two memory blocks.", Guidance: "Use links to connect facts, decisions, and project notes that belong in the same reasoning path.", Params: LinkMemoryParams{}, handler: decodeHandler(a.LinkMemory)})
 }

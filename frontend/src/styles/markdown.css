@@ -24,7 +24,7 @@
   margin: 2px 0 !important; 
 }
 
-* madkdown render css */
+/* Markdown renderer styles */
 .wmde-markdown code,
 table {
   font-family: Poppins;

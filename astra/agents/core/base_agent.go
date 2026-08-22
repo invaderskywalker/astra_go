@@ -72,7 +72,7 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *g
 		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
 		stepCh:      make(chan map[string]interface{}, 10),
 		responseCh:  make(chan string, 10),
-		dataActions: actions.NewDataActions(db, userID),
+		dataActions: actions.NewDataActionsForSession(db, userID, sessionID),
 		chatDAO:     chatDAO,
 		summaryDAO:  summaryDAO,
 		DB:          db,
@@ -699,6 +699,7 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 }
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
+	a.dataActions.RecordSessionEvent(key, value)
 	ctx := context.Background()
 	contentBytes, err := json.Marshal(value)
 	if err != nil {

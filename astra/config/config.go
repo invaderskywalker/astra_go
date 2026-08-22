@@ -18,6 +18,7 @@ type Config struct {
 	MinIOAccessKey string
 	MinIOSecretKey string
 	MinIOBucket    string
+	MindPalaceRoot string
 }
 
 // LoadConfig loads environment variables in this priority order:
@@ -47,6 +48,7 @@ func LoadConfig() Config {
 		MinIOAccessKey: getEnv("MINIO_ACCESS_KEY", ""),
 		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", ""),
 		MinIOBucket:    getEnv("MINIO_BUCKET", ""),
+		MindPalaceRoot: getEnv("ASTRA_MIND_PALACE_DIR", ".astra/mind-palace"),
 	}
 }
 

@@ -53,3 +53,18 @@ The API server starts with:
 ```sh
 go run astra/main.go
 ```
+
+## File-backed memory
+
+Learning is stored outside PostgreSQL. Astra writes a per-user mind palace under
+`$ASTRA_MIND_PALACE_DIR` (default: `.astra/mind-palace`) and mirrors it to the configured MinIO bucket.
+
+```text
+users/{user_id}/
+  sessions/{session_id}/events.jsonl     # immutable session evidence
+  memory/{kind}/{memory_id}.md           # curated, linked memory blocks
+  memory/index.json                       # retrieval index
+```
+
+The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
+Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.

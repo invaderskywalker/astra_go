@@ -35,12 +35,10 @@ func main() {
 
 	userDAO := dao.NewUserDAO(db.DB)
 	chatDAO := dao.NewChatMessageDAO(db.DB)
-	learningDAO := dao.NewLongTermKnowledgeDAO(db.DB)
 	noteDAO := dao.NewNoteDAO(db.DB)
 	authCtrl := controllers.NewAuthController(userDAO, cfg)
 	userCtrl := controllers.NewUserController(userDAO)
 	chatCtrl := controllers.NewChatController(chatDAO)
-	learningCtrl := controllers.NewLongTermController(learningDAO)
 	notesCtrl := controllers.NewNotesController(noteDAO)
 	agentCtrl := controllers.NewAgentsController(db.DB)
 
@@ -53,6 +51,7 @@ func main() {
 		logging.ErrorLogger.Error("minio connection error", zap.Error(err))
 		os.Exit(1)
 	}
+	memoryCtrl := controllers.NewMemoryController(cfg.MindPalaceRoot, minioClient)
 	scrapeCtrl, err := controllers.NewScrapeController(minioClient)
 	if err != nil {
 		logging.ErrorLogger.Error("scrapeCtrl initiation error", zap.Error(err))
@@ -80,8 +79,8 @@ func main() {
 	r.Mount("/users", routes.UserRoutes(userCtrl, cfg))
 	r.Mount("/chat", routes.ChatRoutes(chatCtrl, cfg))
 	r.Mount("/agents", routes.AgentRoutes(agentCtrl, cfg)) // Add agents route
-	r.Mount("/learning", routes.LongTermRoutes(learningCtrl, cfg))
 	r.Mount("/notes", routes.NotesRoutes(notesCtrl, cfg))
+	r.Mount("/learning", routes.MemoryRoutes(memoryCtrl, cfg))
 	r.Mount("/test", routes.ScrapeRoutes(scrapeCtrl, cfg))
 
 	r.Mount("/health", routes.HealthRoutes(healthCtrl))

@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from 'uuid';
 import { fetchChatSessions, fetchMessagesForSession, deleteChatSession } from "../api";
-import { isJsonString, parseMaybeJson, cleanContent, getCurrentTime, scrollToBottom } from "../utils/chatUtils";
+import { cleanContent, getCurrentTime, scrollToBottom } from "../utils/chatUtils";
 
 export interface Message {
   id: string;

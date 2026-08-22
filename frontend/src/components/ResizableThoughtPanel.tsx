@@ -26,7 +26,7 @@ const ResizableThoughtPanel: React.FC<ResizableThoughtPanelProps> = ({ children 
     }
   }, [width]);
 
-  const startDrag = (e: React.MouseEvent) => {
+	const startDrag = () => {
     setDragging(true);
     document.body.style.cursor = 'col-resize';
   };
