@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Record struct {
@@ -25,6 +26,8 @@ type Record struct {
 	Importance int       `json:"importance,omitempty"`
 	Confidence string    `json:"confidence,omitempty"`
 	Source     string    `json:"source,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	Supersedes []string  `json:"supersedes,omitempty"`
 	SessionID  string    `json:"session_id,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -85,6 +88,15 @@ func (s *Store) Save(ctx context.Context, record Record) (Record, []string, erro
 		now := time.Now().UTC()
 		if record.SessionID == "" {
 			record.SessionID = s.sessionID
+		}
+		if record.Status == "" {
+			record.Status = "active"
+		}
+		if record.Status != "active" && record.Status != "superseded" && record.Status != "archived" {
+			return fmt.Errorf("status must be active, superseded, or archived")
+		}
+		if record.Confidence != "" && record.Confidence != "observed" && record.Confidence != "inferred" && record.Confidence != "confirmed" {
+			return fmt.Errorf("confidence must be observed, inferred, or confirmed")
 		}
 		if record.Importance < 0 || record.Importance > 5 {
 			return fmt.Errorf("importance must be between 0 and 5")
@@ -154,28 +166,46 @@ func (s *Store) Search(query string, limit int) ([]Record, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	terms := strings.Fields(strings.ToLower(query))
+	terms := memoryTerms(query)
 	type scored struct {
 		record Record
 		score  int
 	}
 	matches := []scored{}
 	for _, record := range records {
+		if record.Status == "superseded" || record.Status == "archived" {
+			continue
+		}
 		title, tags := strings.ToLower(record.Title), strings.ToLower(strings.Join(record.Tags, " "))
 		body := strings.ToLower(record.Summary + " " + record.Content)
 		score := record.Importance
+		if record.Confidence == "confirmed" {
+			score += 3
+		} else if record.Confidence == "observed" {
+			score += 1
+		}
+		ageDays := time.Since(record.UpdatedAt).Hours() / 24
+		if ageDays < 7 {
+			score += 2
+		} else if ageDays < 30 {
+			score++
+		}
+		matched := false
 		for _, term := range terms {
 			if strings.Contains(title, term) {
 				score += 8
+				matched = true
 			}
 			if strings.Contains(tags, term) {
 				score += 5
+				matched = true
 			}
 			if strings.Contains(body, term) {
 				score += 2
+				matched = true
 			}
 		}
-		if score > record.Importance {
+		if matched {
 			matches = append(matches, scored{record, score})
 		}
 	}
@@ -193,6 +223,89 @@ func (s *Store) Search(query string, limit int) ([]Record, error) {
 		}
 	}
 	return result, nil
+}
+
+// Context returns a compact, ranked context pack for planning. It includes
+// one-hop neighbors so a single remembered decision can lead the agent to the
+// related project convention or constraint without injecting the whole archive.
+func (s *Store) Context(query string, limit int) (string, error) {
+	if strings.TrimSpace(query) == "" {
+		return "No matching memory was requested.", nil
+	}
+	hits, err := s.Search(query, limit)
+	if err != nil {
+		return "", err
+	}
+	if len(hits) == 0 {
+		return "No relevant durable memory was found. Do not invent prior knowledge.", nil
+	}
+	index, err := s.loadIndex()
+	if err != nil {
+		return "", err
+	}
+	byID := make(map[string]Record, len(index.Records))
+	for _, record := range index.Records {
+		byID[record.ID] = record
+	}
+	seen := map[string]bool{}
+	var builder strings.Builder
+	builder.WriteString("Relevant durable memory (use as evidence and verify against the workspace when it affects code):\n")
+	added := 0
+	for _, hit := range hits {
+		if seen[hit.ID] {
+			continue
+		}
+		seen[hit.ID] = true
+		writeContextRecord(&builder, hit)
+		added++
+		for _, relatedID := range hit.Related {
+			related, ok := byID[relatedID]
+			if !ok || seen[related.ID] || related.Status != "active" || added >= limit+2 {
+				continue
+			}
+			seen[related.ID] = true
+			builder.WriteString("\nRelated memory:\n")
+			writeContextRecord(&builder, related)
+			added++
+		}
+	}
+	return builder.String(), nil
+}
+
+func writeContextRecord(builder *strings.Builder, record Record) {
+	content := strings.TrimSpace(record.Content)
+	if len(content) > 1800 {
+		content = content[:1800] + "…"
+	}
+	fmt.Fprintf(builder, "\n- [%s] %s (%s)\n  Confidence: %s | Importance: %d\n  Summary: %s\n  Content: %s\n", record.ID, record.Title, record.Kind, valueOr(record.Confidence, "unspecified"), record.Importance, record.Summary, content)
+}
+func valueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func memoryTerms(value string) []string {
+	var normalized strings.Builder
+	for _, char := range strings.ToLower(value) {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			normalized.WriteRune(char)
+		} else {
+			normalized.WriteByte(' ')
+		}
+	}
+	terms := strings.Fields(normalized.String())
+	unique := make([]string, 0, len(terms))
+	seen := map[string]bool{}
+	for _, term := range terms {
+		if len(term) < 2 || seen[term] {
+			continue
+		}
+		seen[term] = true
+		unique = append(unique, term)
+	}
+	return unique
 }
 func (s *Store) Link(ctx context.Context, fromID, toID string) ([]string, error) {
 	if fromID == toID {
@@ -367,7 +480,7 @@ func safeName(value string) string {
 	return strings.Trim(value, "-")
 }
 func render(record Record, index Index) string {
-	metadata, _ := json.MarshalIndent(map[string]any{"id": record.ID, "kind": record.Kind, "summary": record.Summary, "tags": record.Tags, "related": record.Related, "importance": record.Importance, "confidence": record.Confidence, "source": record.Source, "session_id": record.SessionID, "created_at": record.CreatedAt, "updated_at": record.UpdatedAt}, "", "  ")
+	metadata, _ := json.MarshalIndent(map[string]any{"id": record.ID, "kind": record.Kind, "summary": record.Summary, "tags": record.Tags, "related": record.Related, "importance": record.Importance, "confidence": record.Confidence, "source": record.Source, "status": record.Status, "supersedes": record.Supersedes, "session_id": record.SessionID, "created_at": record.CreatedAt, "updated_at": record.UpdatedAt}, "", "  ")
 	var links strings.Builder
 	for _, related := range record.Related {
 		targetKind := "unknown"

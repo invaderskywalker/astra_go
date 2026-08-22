@@ -31,6 +31,25 @@ astra connect --provider openai --model gpt-5.6-luna
 
 Other supported cloud choices are `gpt-5.6-terra` (balanced) and `gpt-5.6-sol` (highest capability).
 
+While connected, the CLI remains interactive while Astra works. Requests are
+queued in order and streamed as they complete. Use these local controls:
+
+```text
+:help                         Show controls
+:pwd                          Show the connected workspace
+:ls [path]                    List files and sizes
+:tree [path]                  Recursively navigate files
+:model                        Show the active provider/model
+:model ollama qwen3:14b       Switch models when idle
+:model openai gpt-5.6-luna    Switch to Luna for future requests
+:attach /path/to/file         Safely attach an outside file
+:paste                        Start a multiline paste; finish with :endpaste
+```
+
+Explicitly attached files are copied into `.astra/attachments/`. Very large
+single-line pastes are automatically saved there as text attachments and passed
+to Astra by reference, keeping the model context usable and traceable.
+
 Set persistent CLI defaults with:
 
 ```sh
@@ -53,6 +72,75 @@ The API server starts with:
 ```sh
 go run astra/main.go
 ```
+
+## Build once, use the CLI anywhere
+
+From the repository root, build the CLI into a directory on your `PATH`:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+go build -o "$HOME/.local/bin/astra" ./astra/cmd
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For a system-wide installation on macOS/Linux, this is also valid:
+
+```sh
+go build -o ./astra_cli ./astra/cmd
+sudo install -m 0755 ./astra_cli /usr/local/bin/astra
+rm ./astra_cli
+```
+
+Use `install` instead of `mv` so the final binary has predictable executable
+permissions. You may need `/usr/local/bin` on your `PATH`; on Apple Silicon,
+`/opt/homebrew/bin` is another common choice.
+
+To keep the command available in future terminal sessions, add the `export`
+line to `~/.zshrc` (macOS) or `~/.bashrc` (Linux). Verify the installation:
+
+```sh
+which astra
+astra models
+```
+
+Then connect from any project directory. The directory where you run `astra
+connect` becomes the workspace Astra can inspect and modify:
+
+```sh
+cd /path/to/any/project
+astra connect --provider ollama --model qwen3:14b
+```
+
+Use `astra connect --provider openai --model gpt-5.6-luna` when you want Luna.
+The CLI still requires the configured PostgreSQL workflow dependencies; Ollama
+or an OpenAI API key provides the selected model.
+
+## How Astra skills, prompts, and tools work
+
+Astra does not currently have a separate plugin-style skill registry. Its
+capabilities are assembled in layers:
+
+| Layer | What it does | How long it lasts |
+| --- | --- | --- |
+| Prompt policy | Sets behavior such as evidence-first edits and truthful reporting | One model call; defined in `astra/agents/prompts/prompts.go` |
+| Planner prompt | Chooses a sequence of actions for the user request | Planning call only |
+| Execution prompt | Chooses the next single tool call using the plan and results | One execution decision |
+| Action catalog | Describes the typed tools available to the model | Included in planning/execution calls |
+| Action handler | Real Go code that reads, writes, searches, tests, or saves memory | Executes only when selected |
+| Mind Palace | Persists verified knowledge in local linked files | Durable until changed or removed |
+
+So a prompt does not permanently reprogram Astra. A planner prompt changes the
+planner's decision, an execution prompt changes the next action decision, and a
+tool changes the workspace. Only an explicit `save_memory` action creates a
+durable learning. The current action catalog is registered in
+`astra/agents/actions`; the implementation is in Go, not YAML.
+
+The next architectural milestone should be a first-class capability registry:
+each skill would declare its purpose, allowed tools, stage-specific prompt
+instructions, input/output artifact contracts, and validators. The first three
+should be `repository_navigation`, `file_artifacts`, and `mind_palace`. This
+will make Astra's abilities inspectable and composable without turning every
+request into one enormous system prompt.
 
 ## File-backed memory
 

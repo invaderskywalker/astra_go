@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -123,69 +124,105 @@ func main() {
 		fmt.Println(colorutil.ColorInfo("  - Chat about ideas or get coding help with real-time edits\n"))
 		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit.\n"))
 
-		// --- Input Loop ---
+		// --- Interactive input + output multiplexer ---
+		// Input is read independently, so a new request can be submitted while a
+		// previous one is planning, editing, testing, or streaming its response.
 		scanner := bufio.NewScanner(os.Stdin)
-		for {
-			fmt.Print(colorutil.ColorPrompt("astra> "))
-			if !scanner.Scan() {
-				break // EOF or error
+		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+		inputCh := make(chan string)
+		go func() {
+			for scanner.Scan() {
+				inputCh <- scanner.Text()
 			}
-			line := strings.TrimSpace(scanner.Text())
-			if line == "exit" || line == "quit" {
-				sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
-				fmt.Println(colorutil.ColorPrompt("👋 Goodbye!"))
-				break
+			close(inputCh)
+		}()
+		type outputEvent struct {
+			id      int
+			message string
+			done    bool
+		}
+		eventCh := make(chan outputEvent, 128)
+		nextID := 1
+		active := 0
+		pasteMode := false
+		pasteLines := []string{}
+		queueQuery := func(line string) {
+			if len(line) > 12000 {
+				line = saveLargePaste(dirPath, line)
 			}
-			if line == "" {
-				continue
+			id, outputCh := nextID, agent.ProcessQuery(line)
+			nextID++
+			active++
+			go func(id int, outputCh <-chan string) {
+				for message := range outputCh {
+					eventCh <- outputEvent{id: id, message: message}
+				}
+				eventCh <- outputEvent{id: id, done: true}
+			}(id, outputCh)
+			fmt.Printf(colorutil.ColorInfo("Queued request #%d (you can continue typing).\n"), id)
+		}
+		fmt.Print(colorutil.ColorPrompt("astra> "))
+		for inputCh != nil || active > 0 {
+			cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(inputCh)}}
+			if inputCh == nil {
+				cases = nil
 			}
-
-			outputCh := agent.ProcessQuery(line)
-			for msg := range outputCh {
-				var data map[string]interface{}
-				if err := json.Unmarshal([]byte(msg), &data); err != nil {
-					// If it's not JSON, just print as is (probably error or fallback)
-					fmt.Print(colorutil.ColorWarning(msg))
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(eventCh)})
+			chosen, value, ok := reflect.Select(cases)
+			if inputCh != nil && chosen == 0 {
+				if !ok {
+					inputCh = nil
 					continue
 				}
-				eventType, _ := data["type"].(string)
-				payload, _ := data["payload"].(map[string]interface{})
-
-				switch eventType {
-				case "error":
-					if payload != nil {
-						if msg, ok := payload["message"].(string); ok {
-							fmt.Println(colorutil.ColorError(msg))
-						} else {
-							fmt.Println(colorutil.ColorError("Error occurred."))
-						}
+				line := strings.TrimSpace(value.String())
+				if pasteMode {
+					if line == ":endpaste" {
+						pasteMode = false
+						queueQuery(strings.Join(pasteLines, "\n"))
+						pasteLines = nil
+						fmt.Print(colorutil.ColorPrompt("astra> "))
+					} else {
+						pasteLines = append(pasteLines, value.String())
 					}
-				case "completed":
-					// fmt.Println(colorutil.ColorFinalSuccess("\nProcess completed successfully!"))
-					if payload != nil {
-						if msg, ok := payload["message"].(string); ok {
-							fmt.Println(colorutil.ColorFinalSuccess(msg))
-						}
-					}
-				case "intermediate":
-					// Show intermediate status/plan/step updates
-					if payload != nil {
-						if msg, ok := payload["message"].(string); ok {
-							fmt.Println(colorutil.ColorInfo(msg))
-						}
-					}
-				case "response_chunk":
-					// if payload != nil {
-					// 	if chunk, ok := payload["chunk"].(string); ok {
-					// 		fmt.Print(colorutil.ColorAgentResponse(chunk))
-					// 	}
-					// }
-				default:
-					// fallback: print non-parsable, unexpected event as info
-					// fmt.Println(colorutil.ColorInfo(msg))
+					continue
 				}
+				if line == "" {
+					fmt.Print(colorutil.ColorPrompt("astra> "))
+					continue
+				}
+				if line == "exit" || line == "quit" {
+					sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
+					fmt.Println(colorutil.ColorPrompt("👋 Goodbye!"))
+					break
+				}
+				if line == ":paste" {
+					pasteMode = true
+					pasteLines = nil
+					fmt.Println(colorutil.ColorInfo("Paste content now. Type :endpaste on its own line when finished."))
+					continue
+				}
+				handled, nextProvider, nextModel := handleCLICommand(line, dirPath, *provider, *model, agent, active)
+				if handled {
+					*provider, *model = nextProvider, nextModel
+					fmt.Print(colorutil.ColorPrompt("astra> "))
+					continue
+				}
+				queueQuery(line)
+				fmt.Print(colorutil.ColorPrompt("astra> "))
+				continue
 			}
-			fmt.Println()
+			if chosen == len(cases)-1 {
+				event, _ := value.Interface().(outputEvent)
+				if event.done {
+					active--
+					if active == 0 {
+						fmt.Println()
+						fmt.Print(colorutil.ColorPrompt("astra> "))
+					}
+					continue
+				}
+				printCLIEvent(event.message)
+			}
 		}
 		os.Exit(0)
 
@@ -308,6 +345,190 @@ func printModels(ctx context.Context) {
 	fmt.Println(colorutil.ColorInfo("Ollama:"))
 	for _, model := range models {
 		fmt.Println(colorutil.ColorInfo("  - " + model))
+	}
+}
+
+func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, active int) (bool, string, string) {
+	if !strings.HasPrefix(line, ":") {
+		return false, provider, model
+	}
+	parts := strings.Fields(line)
+	command := strings.TrimPrefix(parts[0], ":")
+	switch command {
+	case "help":
+		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :help, :quit"))
+	case "pwd":
+		fmt.Println(dir)
+	case "model":
+		if len(parts) == 3 {
+			if active > 0 {
+				fmt.Println(colorutil.ColorWarning("Wait for current requests to finish before switching models."))
+			} else if err := agent.SetModel(parts[1], parts[2]); err != nil {
+				fmt.Println(colorutil.ColorError(err.Error()))
+			} else {
+				provider, model = parts[1], parts[2]
+				fmt.Printf(colorutil.ColorFinalSuccess("Switched to %s/%s for future requests.\n"), provider, model)
+			}
+		} else {
+			fmt.Printf(colorutil.ColorInfo("Current model: %s/%s\nUsage: :model <ollama|openai> <model>\n"), provider, model)
+		}
+	case "ls", "tree":
+		path := dir
+		if len(parts) > 1 {
+			var err error
+			path, err = workspaceCLIPath(dir, parts[1])
+			if err != nil {
+				fmt.Println(colorutil.ColorError(err.Error()))
+				break
+			}
+		}
+		if err := listCLIFiles(path, dir, command == "tree", 0); err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+		}
+	case "attach":
+		if len(parts) != 2 {
+			fmt.Println(colorutil.ColorWarning("Usage: :attach <file-path>"))
+			break
+		}
+		if target, err := attachCLIFile(dir, parts[1]); err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+		} else {
+			fmt.Println(colorutil.ColorFinalSuccess("Attached: " + target))
+		}
+	default:
+		fmt.Println(colorutil.ColorWarning("Unknown local command. Type :help."))
+	}
+	return true, provider, model
+}
+
+func workspaceCLIPath(root, requested string) (string, error) {
+	path := requested
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path must remain inside the connected workspace; use :attach for an outside file")
+	}
+	return path, nil
+}
+
+func listCLIFiles(path, root string, recursive bool, depth int) error {
+	if depth > 6 {
+		return nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".git") || entry.Name() == "node_modules" {
+			continue
+		}
+		rel, _ := filepath.Rel(root, filepath.Join(path, entry.Name()))
+		prefix := strings.Repeat("  ", depth)
+		if entry.IsDir() {
+			fmt.Printf("%s📁 %s/\n", prefix, rel)
+			if recursive {
+				if err := listCLIFiles(filepath.Join(path, entry.Name()), root, true, depth+1); err != nil {
+					return err
+				}
+			}
+		} else {
+			info, _ := entry.Info()
+			size := int64(0)
+			if info != nil {
+				size = info.Size()
+			}
+			fmt.Printf("%s📄 %s (%d bytes)\n", prefix, rel, size)
+		}
+	}
+	return nil
+}
+
+func attachCLIFile(root, requested string) (string, error) {
+	path := requested
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("attachments must be files")
+	}
+	if info.Size() > 32*1024*1024 {
+		return "", fmt.Errorf("file is larger than 32 MB")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	name := filepath.Base(path)
+	destination := filepath.Join(root, ".astra", "attachments", uuid.New().String()+"-"+name)
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(destination, data, 0644); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join(".astra", "attachments", filepath.Base(destination))), nil
+}
+
+func saveLargePaste(root, content string) string {
+	destination := filepath.Join(root, ".astra", "attachments", "paste-"+uuid.New().String()+".txt")
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return "I received a large paste, but could not save it: " + err.Error()
+	}
+	if err := os.WriteFile(destination, []byte(content), 0644); err != nil {
+		return "I received a large paste, but could not save it: " + err.Error()
+	}
+	rel, _ := filepath.Rel(root, destination)
+	return fmt.Sprintf("I pasted a large input. Read the saved attachment at %s and use it as the source for this request.", filepath.ToSlash(rel))
+}
+
+func printCLIEvent(message string) {
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &data); err != nil {
+		fmt.Print(colorutil.ColorWarning(message))
+		return
+	}
+	eventType, _ := data["type"].(string)
+	payload, _ := data["payload"].(map[string]interface{})
+	switch eventType {
+	case "error":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				fmt.Println(colorutil.ColorError(text))
+			}
+		}
+	case "completed":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				fmt.Println(colorutil.ColorFinalSuccess(text))
+			}
+		}
+	case "intermediate":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				fmt.Println(colorutil.ColorInfo(text))
+			}
+		}
+	case "response_chunk":
+		if payload != nil {
+			if text, ok := payload["chunk"].(string); ok {
+				fmt.Print(colorutil.ColorAgentResponse(text))
+			}
+		}
 	}
 }
 

@@ -43,10 +43,16 @@ type BaseAgent struct {
 	dataActions    *actions.DataActions
 	stepCh         chan map[string]interface{}
 	responseCh     chan string
+	queryQueue     chan queuedQuery
 	mu             sync.Mutex
 	chatDAO        *dao.ChatMessageDAO
 	summaryDAO     *dao.SessionSummaryDAO
 	DB             *gorm.DB
+}
+
+type queuedQuery struct {
+	query string
+	out   chan string
 }
 
 func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *BaseAgent {
@@ -68,6 +74,7 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *g
 		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
 		stepCh:      make(chan map[string]interface{}, 10),
 		responseCh:  make(chan string, 10),
+		queryQueue:  make(chan queuedQuery, 32),
 		dataActions: actions.NewDataActionsForSession(db, userID, sessionID),
 		chatDAO:     chatDAO,
 		summaryDAO:  summaryDAO,
@@ -78,7 +85,31 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *g
 		zap.String("agent_name", agentName), zap.String("provider", provider), zap.String("model", model),
 	)
 	go agent.handleEvents()
+	go agent.processQueue()
 	return agent
+}
+
+// SetModel switches the model for future queued requests. Callers should only
+// invoke this when no request is currently running; the interactive CLI enforces
+// that rule and reports the active queue state to the user.
+func (a *BaseAgent) SetModel(provider, model string) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	if provider != "ollama" && provider != "openai" && provider != "gpt" {
+		return fmt.Errorf("unsupported provider %q", provider)
+	}
+	if model == "" {
+		return fmt.Errorf("model is required")
+	}
+	a.LLM, a.Model = llm.NewClient(provider), model
+	return nil
+}
+
+func (a *BaseAgent) processQueue() {
+	for request := range a.queryQueue {
+		a.runQuery(request.query, request.out)
+		close(request.out)
+	}
 }
 
 // handleEvents now includes colorized output for direct agent prints (step and response)
@@ -90,8 +121,9 @@ func (a *BaseAgent) handleEvents() {
 				fmt.Println(colorutil.ColorInfo("[Astra Step] " + msg))
 			}
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
-		case resp := <-a.responseCh:
-			fmt.Print(colorutil.ColorAgentResponse(resp))
+		case <-a.responseCh:
+			// Response chunks are rendered by the caller that owns the stream.
+			// Keep this channel drained for internal reasoning streams.
 		}
 	}
 }
@@ -168,12 +200,18 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 
 	// Get lightweight action summaries (name + description) from runtime registry
 	actionSummaries := a.dataActions.ListActions()
+	memoryContext, memoryErr := a.dataActions.MemoryContext(query, 6)
+	if memoryErr != nil {
+		logging.AppLogger.Warn("memory retrieval unavailable; continuing without durable context", zap.Error(memoryErr))
+		memoryContext = "Memory retrieval failed; rely on current workspace evidence."
+	}
 
 	// Prompts are assembled only in the prompts package.
 	systemPrompt := prompts.PlanningSystem(
 		prompts.DefaultProfile.Name,
 		prompts.DefaultProfile.Role,
 		jsonutils.ToJSON(a.getHistory()),
+		memoryContext,
 		prompts.ActionCatalog(actionSummaries),
 		prompts.PlanSchema,
 	)
@@ -258,200 +296,208 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 	return plan
 }
 
+// ProcessQuery queues work and returns immediately. A single worker preserves
+// agent state ordering while allowing the CLI/UI to keep accepting input.
 func (a *BaseAgent) ProcessQuery(query string) <-chan string {
-	ch := make(chan string)
+	ch := make(chan string, 32)
+	select {
+	case a.queryQueue <- queuedQuery{query: query, out: ch}:
+	case <-time.After(250 * time.Millisecond):
+		ch <- a.formatEvent("error", map[string]interface{}{"message": "Astra's request queue is full; try again shortly."})
+		close(ch)
+	}
+	return ch
+}
+
+func (a *BaseAgent) runQuery(query string, ch chan string) {
 	a.storeState("user_query", query)
-	go func() {
-		defer close(ch)
-		// Step 1: Create the rough plan
-		a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
-		roughPlan := a.createRoughPlan(query)
-		if roughPlan["error"] != nil {
+	// Step 1: Create the rough plan
+	a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
+	roughPlan := a.createRoughPlan(query)
+	if roughPlan["error"] != nil {
+		ch <- a.formatEvent("error", map[string]interface{}{
+			"message": fmt.Sprint(roughPlan["error"]),
+		})
+		return
+	}
+	a.RoughPlan = roughPlan
+	ch <- a.formatEvent("intermediate", map[string]interface{}{
+		"message": "Plan created successfully",
+	})
+	ch <- a.formatEvent("intermediate", map[string]interface{}{
+		"message": jsonutils.ToJSON(roughPlan),
+	})
+	results := []map[string]interface{}{}
+	stepIndex := 1
+	const maxExecutionSteps = 12
+	for stepIndex <= maxExecutionSteps {
+		a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
+		expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
+		if expanded == nil {
 			ch <- a.formatEvent("error", map[string]interface{}{
-				"message": fmt.Sprint(roughPlan["error"]),
+				"message": "generateNextExecutionPlan returned nil",
 			})
 			return
 		}
-		a.RoughPlan = roughPlan
-		ch <- a.formatEvent("intermediate", map[string]interface{}{
-			"message": "Plan created successfully",
-		})
-		ch <- a.formatEvent("intermediate", map[string]interface{}{
-			"message": jsonutils.ToJSON(roughPlan),
-		})
-		results := []map[string]interface{}{}
-		stepIndex := 1
-		const maxExecutionSteps = 12
-		for stepIndex <= maxExecutionSteps {
-			a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
-			expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
-			if expanded == nil {
-				ch <- a.formatEvent("error", map[string]interface{}{
-					"message": "generateNextExecutionPlan returned nil",
-				})
-				return
-			}
-			if errVal, ok := expanded["error"]; ok && errVal != nil {
-				ch <- a.formatEvent("error", map[string]interface{}{
-					"message": fmt.Sprint(errVal),
-				})
-				return
-			}
-			shouldContinue := false
-			if sc, ok := expanded["should_continue"].(bool); ok {
-				shouldContinue = sc
-			}
-			if !shouldContinue {
-				break
-			}
-			ch <- a.formatEvent("intermediate", map[string]interface{}{
-				"phase":    "expanded_step",
-				"index":    stepIndex,
-				"expanded": expanded,
+		if errVal, ok := expanded["error"]; ok && errVal != nil {
+			ch <- a.formatEvent("error", map[string]interface{}{
+				"message": fmt.Sprint(errVal),
 			})
-			var planToExec map[string]interface{} = expanded
-			step, ok := expanded["next_step"].(map[string]interface{})
-			if !ok {
-				ch <- a.formatEvent("error", map[string]interface{}{"message": "invalid execution plan: next_step is required"})
-				return
-			}
-			actionName, _ := step["action"].(string)
-			fmt.Println("action name .. ", actionName)
-			if actionName == "" {
-				fmt.Println("breaking no action name")
-				break
-			}
-			ch <- a.formatEvent("intermediate", map[string]interface{}{
-				"phase": "executing_step", "index": stepIndex,
-			})
-			a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
-			if actionName == "think_aloud_reasoning" {
-				var params map[string]interface{}
-				if p, ok := step["action_params"].(map[string]interface{}); ok {
-					params = p
-				} else {
-					params = map[string]interface{}{}
-					if step["action_params"] != nil {
-						bytes, _ := json.Marshal(step["action_params"])
-						_ = json.Unmarshal(bytes, &params)
-					}
-				}
-				contextInfo, _ := params["context"].(string)
-				goal, _ := params["goal"].(string)
-				goal += " Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
-				finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
-				results = append(results, map[string]interface{}{
-					"step_index":    stepIndex,
-					"executed_plan": planToExec,
-					"result":        finalThought,
-				})
-				continue
-			}
-			if actionName == "read_image_with_vision" {
-				var params actions.ReadImageWithVisionParams
-
-				// decode params safely
-				if p, ok := step["action_params"].(map[string]interface{}); ok {
-					bytes, _ := json.Marshal(p)
+			return
+		}
+		shouldContinue := false
+		if sc, ok := expanded["should_continue"].(bool); ok {
+			shouldContinue = sc
+		}
+		if !shouldContinue {
+			break
+		}
+		ch <- a.formatEvent("intermediate", map[string]interface{}{
+			"phase":    "expanded_step",
+			"index":    stepIndex,
+			"expanded": expanded,
+		})
+		var planToExec map[string]interface{} = expanded
+		step, ok := expanded["next_step"].(map[string]interface{})
+		if !ok {
+			ch <- a.formatEvent("error", map[string]interface{}{"message": "invalid execution plan: next_step is required"})
+			return
+		}
+		actionName, _ := step["action"].(string)
+		fmt.Println("action name .. ", actionName)
+		if actionName == "" {
+			fmt.Println("breaking no action name")
+			break
+		}
+		ch <- a.formatEvent("intermediate", map[string]interface{}{
+			"phase": "executing_step", "index": stepIndex,
+		})
+		a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
+		if actionName == "think_aloud_reasoning" {
+			var params map[string]interface{}
+			if p, ok := step["action_params"].(map[string]interface{}); ok {
+				params = p
+			} else {
+				params = map[string]interface{}{}
+				if step["action_params"] != nil {
+					bytes, _ := json.Marshal(step["action_params"])
 					_ = json.Unmarshal(bytes, &params)
 				}
-
-				a.stepCh <- map[string]interface{}{
-					"message": "Reading image(s) with vision",
-					"count":   len(params.ImagePaths),
-				}
-
-				visionResults := a.readImageWithVision(params)
-
-				results = append(results, map[string]interface{}{
-					"step_index":    stepIndex,
-					"executed_plan": planToExec,
-					"result": map[string]interface{}{
-						"vision_results": visionResults,
-					},
-				})
-
-				continue
 			}
-			// fmt.Println("executing plan ... ")
-			execRes := a.executePlan(planToExec)
-			// fmt.Println("executed plan ... ")
-			ch <- a.formatEvent("intermediate", map[string]interface{}{
-				"phase":   "executed_step",
-				"index":   stepIndex,
-				"execRes": execRes,
-			})
+			contextInfo, _ := params["context"].(string)
+			goal, _ := params["goal"].(string)
+			goal += " Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
+			finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
 			results = append(results, map[string]interface{}{
 				"step_index":    stepIndex,
 				"executed_plan": planToExec,
-				"result":        execRes,
+				"result":        finalThought,
 			})
-			stepIndex++
+			continue
 		}
-		if stepIndex > maxExecutionSteps {
-			ch <- a.formatEvent("error", map[string]interface{}{"message": "execution stopped after reaching the safety limit"})
-		}
-		fullPlan := map[string]interface{}{
-			"rough_plan":      a.RoughPlan,
-			"execution_plans": a.ExecutionPlans,
-		}
-		a.storeState("full_plan", fullPlan)
-		// generate  LLM response
-		a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
-		respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
-		respCh, err := a.LLM.RunStream(context.Background(), respReq)
-		if err != nil {
-			a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
-			ch <- a.formatEvent("error", map[string]interface{}{
-				"message": "failed to stream response", "error": err.Error(),
-			})
-			return
-		}
-		resp := ""
-		var utf8Buf string
+		if actionName == "read_image_with_vision" {
+			var params actions.ReadImageWithVisionParams
 
-		for chunk := range respCh {
-			resp += chunk
-			utf8Buf += chunk
-
-			for utf8.ValidString(utf8Buf) {
-				last := len(utf8Buf)
-				for last > 0 && !utf8.ValidString(utf8Buf[:last]) {
-					last--
-				}
-				if last == 0 {
-					break
-				}
-
-				safe := utf8Buf[:last]
-				utf8Buf = utf8Buf[last:]
-
-				// console (optional)
-				a.responseCh <- safe
-
-				// websocket
-				ch <- a.formatEvent("response_chunk", map[string]interface{}{
-					"chunk": safe,
-				})
+			// decode params safely
+			if p, ok := step["action_params"].(map[string]interface{}); ok {
+				bytes, _ := json.Marshal(p)
+				_ = json.Unmarshal(bytes, &params)
 			}
+
+			a.stepCh <- map[string]interface{}{
+				"message": "Reading image(s) with vision",
+				"count":   len(params.ImagePaths),
+			}
+
+			visionResults := a.readImageWithVision(params)
+
+			results = append(results, map[string]interface{}{
+				"step_index":    stepIndex,
+				"executed_plan": planToExec,
+				"result": map[string]interface{}{
+					"vision_results": visionResults,
+				},
+			})
+
+			continue
 		}
-		a.storeState("response", resp)
-		// --- SESSION SUMMARY PERSISTENCE ---
-		// a.stepCh <- map[string]interface{}{"message": "Generating and persisting session summary"}
-		// summaryText := a.GenerateSessionSummary(query, roughPlan, a.ExecutionPlans, results)
-		// ctx := context.Background()
-		// _, err = a.summaryDAO.UpsertSessionSummary(ctx, a.SessionID, a.UserID, summaryText)
-		// if err != nil {
-		// 	ch <- a.formatEvent("error", map[string]interface{}{
-		// 		"message": fmt.Sprintf("Failed to upsert session summary: %v", err),
-		// 	})
-		// }
-		ch <- a.formatEvent("completed", map[string]interface{}{
-			"message": "Process completed successfully",
-			"steps":   len(results),
+		// fmt.Println("executing plan ... ")
+		execRes := a.executePlan(planToExec)
+		// fmt.Println("executed plan ... ")
+		ch <- a.formatEvent("intermediate", map[string]interface{}{
+			"phase":   "executed_step",
+			"index":   stepIndex,
+			"execRes": execRes,
 		})
-	}()
-	return ch
+		results = append(results, map[string]interface{}{
+			"step_index":    stepIndex,
+			"executed_plan": planToExec,
+			"result":        execRes,
+		})
+		stepIndex++
+	}
+	if stepIndex > maxExecutionSteps {
+		ch <- a.formatEvent("error", map[string]interface{}{"message": "execution stopped after reaching the safety limit"})
+	}
+	fullPlan := map[string]interface{}{
+		"rough_plan":      a.RoughPlan,
+		"execution_plans": a.ExecutionPlans,
+	}
+	a.storeState("full_plan", fullPlan)
+	// generate  LLM response
+	a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
+	respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
+	respCh, err := a.LLM.RunStream(context.Background(), respReq)
+	if err != nil {
+		a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
+		ch <- a.formatEvent("error", map[string]interface{}{
+			"message": "failed to stream response", "error": err.Error(),
+		})
+		return
+	}
+	resp := ""
+	var utf8Buf string
+
+	for chunk := range respCh {
+		resp += chunk
+		utf8Buf += chunk
+
+		for utf8.ValidString(utf8Buf) {
+			last := len(utf8Buf)
+			for last > 0 && !utf8.ValidString(utf8Buf[:last]) {
+				last--
+			}
+			if last == 0 {
+				break
+			}
+
+			safe := utf8Buf[:last]
+			utf8Buf = utf8Buf[last:]
+
+			// console (optional)
+			a.responseCh <- safe
+
+			// websocket
+			ch <- a.formatEvent("response_chunk", map[string]interface{}{
+				"chunk": safe,
+			})
+		}
+	}
+	a.storeState("response", resp)
+	// --- SESSION SUMMARY PERSISTENCE ---
+	// a.stepCh <- map[string]interface{}{"message": "Generating and persisting session summary"}
+	// summaryText := a.GenerateSessionSummary(query, roughPlan, a.ExecutionPlans, results)
+	// ctx := context.Background()
+	// _, err = a.summaryDAO.UpsertSessionSummary(ctx, a.SessionID, a.UserID, summaryText)
+	// if err != nil {
+	// 	ch <- a.formatEvent("error", map[string]interface{}{
+	// 		"message": fmt.Sprintf("Failed to upsert session summary: %v", err),
+	// 	})
+	// }
+	ch <- a.formatEvent("completed", map[string]interface{}{
+		"message": "Process completed successfully",
+		"steps":   len(results),
+	})
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string]interface{}) {

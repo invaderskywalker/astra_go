@@ -25,10 +25,13 @@ Operating rules:
 4. Preview risky edits with dry_run. After every code change, run the most relevant verification command.
 5. If verification fails, repair the reported blocker; do not explore unrelated files. Stop after three unsuccessful repair attempts and report the evidence.
 6. Never claim an edit, command, or test succeeded unless its ActionResult says success.
-7. Use a follow-up question only for a decision that cannot safely be inferred.`
+7. Use a follow-up question only for a decision that cannot safely be inferred.
+8. Treat retrieved memory as evidence with provenance, not as unquestionable truth. Prefer current workspace evidence when memory conflicts.
+9. For durable knowledge, save concise facts, decisions, constraints, and conventions—not raw transcripts or speculative thoughts.
+10. For user deliverables, choose the correct artifact format and use write_artifact; do not hide a requested file inside a chat response.`
 
-const PlanSchema = `{"mind_map_steps_in_natural_language":["string"],"assumptions":["string"]}`
-const ExecutionSchema = `{"should_continue":true,"next_step":{"step_id":"string","action":"tool name","action_params":{}}}`
+const PlanSchema = `{"goal":"string","mind_map_steps_in_natural_language":["string"],"assumptions":["string"],"constraints":["string"],"verification":["command or observation"],"artifacts":["path and format"]}`
+const ExecutionSchema = `{"should_continue":true,"next_step":{"step_id":"string","action":"tool name","action_params":{},"reason":"string","expected_observation":"string"}}`
 
 func ActionCatalog(specs []actions.ActionSpec) string {
 	entries := make([]string, 0, len(specs))
@@ -38,16 +41,21 @@ func ActionCatalog(specs []actions.ActionSpec) string {
 	return strings.Join(entries, "\n")
 }
 
-func PlanningSystem(agentName, role, history, actionCatalog, outputSchema string) string {
+func PlanningSystem(agentName, role, history, memoryContext, actionCatalog, outputSchema string) string {
 	return fmt.Sprintf(`%s
 
 Role: %s (%s)
 Conversation history: %s
 
+<retrieved_memory>
+%s
+</retrieved_memory>
+
 Available tools:
 %s
 
-Create a concise plan as valid JSON only. Include only concrete actions from the catalog, with complete parameters. The plan should sequence evidence collection, targeted changes, and verification. Schema: %s`, EngineeringPolicy, agentName, role, history, actionCatalog, outputSchema)
+Create a concise plan as valid JSON only. Include only concrete actions from the catalog, with complete parameters. The plan must sequence evidence collection, targeted changes, verification, and any required artifact or memory update. Do not treat retrieved memory as proof when current inspection can verify it. If the request establishes a durable decision, preference, constraint, or project fact, plan a concise save_memory action after verification. Schema: %s`, EngineeringPolicy, agentName, role, history, memoryContext, actionCatalog, outputSchema)
+
 }
 
 func PlanningUser(query string) string {
@@ -62,7 +70,7 @@ Previous results: %s
 Available tools:
 %s
 
-Select exactly one next action as valid JSON only. If the task is complete, return should_continue=false. Do not repeat a successful action without new evidence. Schema: %s`, EngineeringPolicy, roughPlan, previousResults, actionCatalog, outputSchema)
+Select exactly one next action as valid JSON only. If the task is complete, return should_continue=false. Do not repeat a successful action without new evidence. Prefer the smallest action that reduces uncertainty or completes the next plan step. After edits, select a relevant validator. Schema: %s`, EngineeringPolicy, roughPlan, previousResults, actionCatalog, outputSchema)
 }
 
 func ExecutionUser() string {

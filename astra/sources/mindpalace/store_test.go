@@ -88,6 +88,43 @@ func TestStoreSearchRanksTitleAndImportance(t *testing.T) {
 	}
 }
 
+func TestStoreContextIncludesRelatedMemory(t *testing.T) {
+	store := New(t.TempDir(), 42, "session-1", nil)
+	decision, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Use Go", Summary: "Backend language", Content: "Use Go for the backend.", Confidence: "confirmed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraint, _, err := store.Save(context.Background(), Record{Kind: "constraint", Title: "Local first", Summary: "Keep data portable", Content: "Durable learning belongs in files.", Importance: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Link(context.Background(), decision.ID, constraint.ID); err != nil {
+		t.Fatal(err)
+	}
+	pack, err := store.Context("backend language", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pack, decision.ID) || !strings.Contains(pack, constraint.ID) {
+		t.Fatalf("context omitted linked memory: %s", pack)
+	}
+}
+
+func TestStoreDoesNotRecallArchivedMemory(t *testing.T) {
+	store := New(t.TempDir(), 42, "session-1", nil)
+	_, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Old choice", Content: "Use the old approach.", Status: "archived"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := store.Search("old choice", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("archived memory was recalled: %#v", matches)
+	}
+}
+
 func TestStoreAppendsSessionEvidence(t *testing.T) {
 	store := New(t.TempDir(), 7, "session-42", nil)
 	if _, err := store.AppendSessionEvent(context.Background(), "plan", map[string]string{"goal": "test"}); err != nil {
