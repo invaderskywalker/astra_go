@@ -3,6 +3,7 @@ package main
 
 import (
 	"astra/astra/agents/core"
+	"astra/astra/agents/improvements"
 	"astra/astra/config"
 	"astra/astra/controllers"
 	"astra/astra/services/llm"
@@ -34,6 +35,10 @@ func main() {
 	defer cancel()
 
 	args := os.Args[1:]
+	if len(args) >= 1 && args[0] == "improve" {
+		runImprove(args[1:])
+		return
+	}
 	if len(args) >= 1 && args[0] == "models" {
 		printModels(ctx)
 		return
@@ -188,7 +193,103 @@ func main() {
 		fmt.Println(colorutil.ColorPrompt("Astra CLI usage:"))
 		fmt.Println(colorutil.ColorInfo("  astra connect [--provider ollama|openai] [--model MODEL]"))
 		fmt.Println(colorutil.ColorInfo("  astra models    # Show local Ollama and supported cloud model choices"))
+		fmt.Println(colorutil.ColorInfo("  astra improve scan|list|review|approve|reject  # Improvement proposal queue"))
 		os.Exit(1)
+	}
+}
+
+func runImprove(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: astra improve scan|list|review|approve|reject")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	switch args[0] {
+	case "scan":
+		flags := flag.NewFlagSet("improve scan", flag.ExitOnError)
+		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		provider := flags.String("provider", "ollama", "LLM provider")
+		model := flags.String("model", "qwen3:14b", "scout model")
+		_ = flags.Parse(args[1:])
+		proposal, err := improvements.Scan(ctx, llm.NewClient(*provider), *model, getWorkingDir())
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Scan failed: " + err.Error()))
+			return
+		}
+		proposal, err = improvements.New(*root).SaveProposal(proposal)
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not save proposal: " + err.Error()))
+			return
+		}
+		fmt.Println(colorutil.ColorFinalSuccess("Proposal created: " + proposal.ID))
+		fmt.Println(proposal.Title)
+	case "list":
+		flags := flag.NewFlagSet("improve list", flag.ExitOnError)
+		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		_ = flags.Parse(args[1:])
+		proposals, err := improvements.New(*root).List()
+		if err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+			return
+		}
+		if len(proposals) == 0 {
+			fmt.Println("No improvement proposals.")
+			return
+		}
+		for _, proposal := range proposals {
+			fmt.Printf("%s  [%s]  %s\n", proposal.ID, proposal.Status, proposal.Title)
+		}
+	case "review":
+		flags := flag.NewFlagSet("improve review", flag.ExitOnError)
+		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		provider := flags.String("provider", "openai", "LLM provider")
+		model := flags.String("model", "gpt-5.6-luna", "review model")
+		_ = flags.Parse(args[1:])
+		if flags.NArg() != 1 {
+			fmt.Println("Usage: astra improve review <proposal-id>")
+			return
+		}
+		store := improvements.New(*root)
+		proposal, err := store.Get(flags.Arg(0))
+		if err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+			return
+		}
+		review, err := improvements.ReviewProposal(ctx, llm.NewClient(*provider), *model, proposal)
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Review failed: " + err.Error()))
+			return
+		}
+		if err := store.SaveReview(review); err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+			return
+		}
+		fmt.Printf("%s: %s\n%s\n", review.Recommendation, proposal.Title, review.Rationale)
+	case "approve", "reject":
+		flags := flag.NewFlagSet("improve "+args[0], flag.ExitOnError)
+		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		reason := flags.String("reason", "", "human decision reason")
+		_ = flags.Parse(args[1:])
+		if flags.NArg() != 1 {
+			fmt.Printf("Usage: astra improve %s <proposal-id> [--reason TEXT]\n", args[0])
+			return
+		}
+		store := improvements.New(*root)
+		status := improvements.Approved
+		recommendation := "approved"
+		if args[0] == "reject" {
+			status, recommendation = improvements.Rejected, "rejected"
+		}
+		proposal, err := store.SetStatus(flags.Arg(0), status)
+		if err != nil {
+			fmt.Println(colorutil.ColorError(err.Error()))
+			return
+		}
+		_ = store.SaveReview(improvements.Review{ProposalID: proposal.ID, Model: "human", Recommendation: recommendation, Rationale: *reason})
+		fmt.Printf("Proposal %s %s. No code has been changed.\n", proposal.ID, recommendation)
+	default:
+		fmt.Println("Usage: astra improve scan|list|review|approve|reject")
 	}
 }
 

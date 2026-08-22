@@ -68,3 +68,22 @@ users/{user_id}/
 
 The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
 Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.
+
+## Controlled self-improvement
+
+Improvement proposals are local Markdown files under `.astra/improvements`. The scout can observe and propose; it cannot modify code. Luna can review a proposal; only you can approve or reject it.
+
+```sh
+# Qwen observes the workspace and creates one review-ready proposal.
+astra improve scan --provider ollama --model qwen3:14b
+
+# Read proposals, then ask Luna for an evidence/risk review.
+astra improve list
+astra improve review imp_... --provider openai --model gpt-5.6-luna
+
+# Human decision. Approval does not execute a change.
+astra improve approve imp_... --reason "Reviewed tests and scope"
+astra improve reject imp_... --reason "Not valuable now"
+```
+
+Every proposal includes evidence, a bounded action list, validation steps, risk, and a mandatory human-approval flag. The controlled branch/PR executor is intentionally a later phase.
