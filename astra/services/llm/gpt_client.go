@@ -40,58 +40,44 @@ func NewGPTClient() *GPTClient {
 	// Log which source worked (optional for debugging)
 	if apiKey != "" {
 		fmt.Println("🔑 OpenAI API key loaded successfully.")
-	} else {
-		logging.ErrorLogger.Fatal("Missing OPENAI_API_KEY. Please set it in .env or ~/.astra/.astra.env")
-	}
-
-	// 3️⃣ Fail clearly if key still not found
-	if apiKey == "" {
-		logging.ErrorLogger.Fatal("Missing OPENAI_API_KEY. Please set it in .env or ~/.astra/.astra.env")
 	}
 
 	return &GPTClient{
 		apiKey:  apiKey,
-		baseURL: "https://api.openai.com/v1/chat/completions",
+		baseURL: "https://api.openai.com/v1/responses",
 	}
 }
 
-type gptChatRequest struct {
-	Model    string      `json:"model"`
-	Messages []Message   `json:"messages"`
-	Stream   bool        `json:"stream"`
-	Options  interface{} `json:"options,omitempty"`
+type responsesRequest struct {
+	Model     string      `json:"model"`
+	Input     []Message   `json:"input"`
+	Stream    bool        `json:"stream"`
+	Reasoning interface{} `json:"reasoning,omitempty"`
 }
 
-type gptResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
+type responsesResponse struct {
+	Output []struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
 }
 
-type gptStreamResponse struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
+type responsesStreamEvent struct {
+	Type  string `json:"type"`
+	Delta string `json:"delta"`
 }
 
 // Run executes a single GPT completion request (non-streaming)
 func (c *GPTClient) Run(ctx context.Context, req ChatRequest) (string, error) {
 	defer logging.LogDuration(ctx, "gpt_service_run")()
+	if c.apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY is required for the OpenAI provider")
+	}
 
-	gptReq := gptChatRequest{
-		Model:    req.Model,
-		Messages: req.Messages,
-		Stream:   false,
-		Options:  req.Options,
+	gptReq := responsesRequest{
+		Model: req.Model, Input: req.Messages, Stream: false, Reasoning: req.Options,
 	}
 
 	// Manual POST because we need custom headers
@@ -115,31 +101,38 @@ func (c *GPTClient) Run(ctx context.Context, req ChatRequest) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("GPT request failed: %s - %s", resp.Status, string(b))
+		return "", fmt.Errorf("OpenAI Responses request failed: %s - %s", resp.Status, string(b))
 	}
 
-	var parsed gptResponse
+	var parsed responsesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return "", fmt.Errorf("failed to decode GPT response: %w", err)
 	}
 
-	if len(parsed.Choices) > 0 {
-		return parsed.Choices[0].Message.Content, nil
+	var text strings.Builder
+	for _, item := range parsed.Output {
+		for _, content := range item.Content {
+			if content.Type == "output_text" {
+				text.WriteString(content.Text)
+			}
+		}
 	}
-
-	return "", fmt.Errorf("no content in GPT response")
+	if text.Len() == 0 {
+		return "", fmt.Errorf("no text content in OpenAI response")
+	}
+	return text.String(), nil
 }
 
 // RunStream handles streaming responses
 // RunStream handles streaming responses (OpenAI / Groq / compatible)
 func (c *GPTClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, error) {
 	defer logging.LogDuration(ctx, "gpt_service_run_stream")()
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required for the OpenAI provider")
+	}
 
-	gptReq := gptChatRequest{
-		Model:    req.Model,
-		Messages: req.Messages,
-		Stream:   true,
-		Options:  req.Options,
+	gptReq := responsesRequest{
+		Model: req.Model, Input: req.Messages, Stream: true, Reasoning: req.Options,
 	}
 
 	body, err := json.Marshal(gptReq)
@@ -162,7 +155,7 @@ func (c *GPTClient) RunStream(ctx context.Context, req ChatRequest) (<-chan stri
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GPT stream request failed: %s - %s", resp.Status, string(b))
+		return nil, fmt.Errorf("OpenAI Responses stream request failed: %s - %s", resp.Status, string(b))
 	}
 
 	ch := make(chan string)
@@ -209,20 +202,18 @@ func (c *GPTClient) RunStream(ctx context.Context, req ChatRequest) (<-chan stri
 				return
 			}
 
-			var chunk gptStreamResponse
+			var chunk responsesStreamEvent
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				logging.ErrorLogger.Error("GPT stream JSON parse error",
 					zap.Any("err", err), zap.String("raw_line", data))
 				continue
 			}
 
-			for _, choice := range chunk.Choices {
-				if choice.Delta.Content != "" {
-					select {
-					case ch <- choice.Delta.Content:
-					case <-ctx.Done():
-						return
-					}
+			if chunk.Type == "response.output_text.delta" && chunk.Delta != "" {
+				select {
+				case ch <- chunk.Delta:
+				case <-ctx.Done():
+					return
 				}
 			}
 		}

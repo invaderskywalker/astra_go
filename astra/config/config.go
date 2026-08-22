@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -32,10 +31,7 @@ func LoadConfig() Config {
 		if err == nil {
 			globalEnvPath := filepath.Join(homeDir, ".astra", ".astra.env")
 			if _, err := os.Stat(globalEnvPath); err == nil {
-				fmt.Println("🔄 Loading global config from:", globalEnvPath)
 				_ = godotenv.Load(globalEnvPath)
-			} else {
-				fmt.Println("⚠️ No global config found at ~/.astra/.astra.env")
 			}
 		}
 	}
@@ -56,7 +52,6 @@ func LoadConfig() Config {
 
 func getEnv(key, fallback string) string {
 	value := os.Getenv(key)
-	fmt.Println("get env ", key, value)
 	if value != "" {
 		return value
 	}

@@ -17,7 +17,7 @@ func TestHealthCheck(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
-	expectedBody := `{"status": "ok"}`
+	expectedBody := `{"status": "ok", "version": "v1.0.0"}`
 	if rr.Body.String() != expectedBody {
 		t.Errorf("expected body %q, got %q", expectedBody, rr.Body.String())
 	}

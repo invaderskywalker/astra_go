@@ -73,38 +73,3 @@ func LoadConfig() *AgentConfig {
 	logging.AppLogger.Info("📘 Loaded Agent Config", zap.String("path", yamlPath))
 	return cfg
 }
-
-// ActionYAMLConfig for loading description/details from YAML
-type ActionYAMLConfig struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Details     string `yaml:"details"`
-}
-
-// loadLearningActionYAML loads a specific YAML config by filename
-func loadLearningActionYAML(filename string) (*ActionYAMLConfig, error) {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	var cfg ActionYAMLConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-func LoadActionsYAMLInDir(dir string) (map[string]*ActionYAMLConfig, error) {
-	result := make(map[string]*ActionYAMLConfig)
-	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	for _, f := range files {
-		cfg, err := loadLearningActionYAML(f)
-		if err == nil && cfg.Name != "" {
-			result[cfg.Name] = cfg
-		}
-	}
-	return result, nil
-}

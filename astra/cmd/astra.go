@@ -5,6 +5,7 @@ import (
 	"astra/astra/agents/core"
 	"astra/astra/config"
 	"astra/astra/controllers"
+	"astra/astra/services/llm"
 	"astra/astra/sources/psql"
 	"astra/astra/sources/psql/dao"
 	colorutil "astra/astra/utils/color"
@@ -12,6 +13,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,7 +34,18 @@ func main() {
 	defer cancel()
 
 	args := os.Args[1:]
+	if len(args) >= 1 && args[0] == "models" {
+		printModels(ctx)
+		return
+	}
 	if len(args) >= 1 && args[0] == "connect" {
+		connectFlags := flag.NewFlagSet("connect", flag.ExitOnError)
+		provider := connectFlags.String("provider", llm.DefaultProvider(), "LLM provider: ollama or openai")
+		model := connectFlags.String("model", "", "model name, e.g. qwen3:14b or gpt-5.6-luna")
+		_ = connectFlags.Parse(args[1:])
+		if *model == "" {
+			*model = llm.DefaultModel(*provider)
+		}
 		dirPath := getWorkingDir()
 		logging.AppLogger.Info("Astra CLI: Connecting in directory", zap.String("dir", dirPath))
 
@@ -84,12 +97,12 @@ func main() {
 		// --- Initialize agent ---
 		sessionID := fmt.Sprintf("cli-%s", uuid.New().String())
 		agentName := "astra"
-		agent := core.NewBaseAgent(user.ID, sessionID, agentName, db.DB)
+		agent := core.NewBaseAgentWithModel(user.ID, sessionID, agentName, db.DB, *provider, *model)
 
 		logging.AppLogger.Info("Astra agent initialized in CLI",
 			zap.String("dir", dirPath),
 			zap.Int("userID", user.ID),
-			zap.String("sessionID", sessionID),
+			zap.String("sessionID", sessionID), zap.String("provider", *provider), zap.String("model", *model),
 		)
 
 		// --- macOS Notification + Log Session ---
@@ -98,7 +111,7 @@ func main() {
 
 		// --- CLI Intro Message ---
 		fmt.Printf("%s", colorutil.ColorPrompt("\n🧑‍🚀 Astra is now connected in this directory!\n\n"))
-		fmt.Printf(colorutil.ColorInfo("Session: %s\nUser ID: %d\nPath: %s\n\n"), sessionID, user.ID, dirPath)
+		fmt.Printf(colorutil.ColorInfo("Session: %s\nUser ID: %d\nPath: %s\nModel: %s/%s\n\n"), sessionID, user.ID, dirPath, *provider, *model)
 		fmt.Println(colorutil.ColorPrompt("You can:"))
 		fmt.Println(colorutil.ColorInfo("  - Ask for project bootstrapping (e.g., 'Create a new Vite + TS + Three.js frontend here')"))
 		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
@@ -173,8 +186,27 @@ func main() {
 
 	} else {
 		fmt.Println(colorutil.ColorPrompt("Astra CLI usage:"))
-		fmt.Println(colorutil.ColorInfo("  astra connect   # Connect to Astra agent in this directory"))
+		fmt.Println(colorutil.ColorInfo("  astra connect [--provider ollama|openai] [--model MODEL]"))
+		fmt.Println(colorutil.ColorInfo("  astra models    # Show local Ollama and supported cloud model choices"))
 		os.Exit(1)
+	}
+}
+
+func printModels(ctx context.Context) {
+	fmt.Println(colorutil.ColorPrompt("Model choices"))
+	fmt.Println(colorutil.ColorInfo("OpenAI: gpt-5.6-luna (efficient), gpt-5.6-terra (balanced), gpt-5.6-sol (flagship)"))
+	models, err := llm.ListOllamaModels(ctx)
+	if err != nil {
+		fmt.Println(colorutil.ColorWarning("Ollama: unavailable (" + err.Error() + ")"))
+		return
+	}
+	if len(models) == 0 {
+		fmt.Println(colorutil.ColorWarning("Ollama: no local models installed"))
+		return
+	}
+	fmt.Println(colorutil.ColorInfo("Ollama:"))
+	for _, model := range models {
+		fmt.Println(colorutil.ColorInfo("  - " + model))
 	}
 }
 

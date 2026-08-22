@@ -2,7 +2,7 @@ package actions
 
 import (
 	"astra/astra/services/scraper"
-	"astra/astra/utils/types"
+	"fmt"
 )
 
 type ScrapeURLsParams struct {
@@ -10,45 +10,59 @@ type ScrapeURLsParams struct {
 	WordLimit *int     `json:"word_limit,omitempty"`
 }
 
-type ScrapeURLsResult struct {
-	Results []types.ScrapeResult `json:"results"`
-}
-
 type QueryWebParams struct {
 	Queries     []string `json:"queries"`
 	ResultLimit int      `json:"result_limit"`
 }
 
-type QueryWebResult struct {
-	Results map[string]interface{} `json:"results"`
-}
-
 // Action to scrape given URLs and return their text contents
-func (a *DataActions) ScrapeURLs(params ScrapeURLsParams) (ScrapeURLsResult, error) {
+func (a *DataActions) ScrapeURLs(params ScrapeURLsParams) ActionResult {
 	s, err := scraper.NewScraper()
 	if err != nil {
-		return ScrapeURLsResult{}, err
+		return ActionResult{
+			Success: false,
+			Error:   fmt.Sprintf("scraper init error: %v", err),
+		}
 	}
 	defer s.Close()
 
 	results, err := s.ReadMultiplePages(params.URLs, 2)
 	if err != nil {
-		return ScrapeURLsResult{}, err
+		return ActionResult{
+			Success: false,
+			Error:   fmt.Sprintf("scrape error: %v", err),
+		}
 	}
-	return ScrapeURLsResult{Results: results}, nil
+	filesRead := make([]string, len(params.URLs))
+	copy(filesRead, params.URLs)
+	return ActionResult{
+		Success:     true,
+		Summary:     fmt.Sprintf("Scraped %d URL(s) successfully", len(results)),
+		Diagnostics: results,
+		FilesRead:   filesRead,
+	}
 }
 
 // Action to perform web search queries and return the text snippets
-func (a *DataActions) QueryWeb(params QueryWebParams) (QueryWebResult, error) {
+func (a *DataActions) QueryWeb(params QueryWebParams) ActionResult {
 	s, err := scraper.NewScraper()
 	if err != nil {
-		return QueryWebResult{}, err
+		return ActionResult{
+			Success: false,
+			Error:   fmt.Sprintf("scraper init error: %v", err),
+		}
 	}
 	defer s.Close()
+
 	queryResults := map[string]interface{}{}
 	for _, u := range params.Queries {
 		text, _ := s.QueryWeb(u, params.ResultLimit)
 		queryResults[u] = text
 	}
-	return QueryWebResult{Results: queryResults}, nil
+
+	return ActionResult{
+		Success:     true,
+		Summary:     fmt.Sprintf("Fetched %d query result(s)", len(queryResults)),
+		Diagnostics: queryResults,
+	}
 }

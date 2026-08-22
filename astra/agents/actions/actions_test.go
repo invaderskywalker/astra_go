@@ -20,60 +20,33 @@ func setupTestEnv(t *testing.T) *DataActions {
 	return NewDataActions(db, 1)
 }
 
-// --- Scraping Actions Test: ScrapeURLs ---
-func TestScrapeURLsAction(t *testing.T) {
+func TestExecuteActionUsesUnifiedResult(t *testing.T) {
 	a := setupTestEnv(t)
-	params := map[string]interface{}{
-		"urls": []string{"https://example.com", "https://www.wikipedia.org"},
-	}
-	result, err := a.ExecuteAction("scrape_urls", params)
+	result, err := a.ExecuteAction("list_files", map[string]interface{}{"path": "."})
 	if err != nil {
-		t.Errorf("scrape_urls action failed: %v", err)
+		t.Fatalf("pwd action failed: %v", err)
 	}
-	results, ok := result["results"].([]interface{})
-	if !ok || len(results) == 0 {
-		t.Errorf("expected non-empty results from scrape_urls")
+	if !result.Success || result.Diagnostics == nil {
+		t.Fatalf("unexpected unified result: %#v", result)
 	}
 }
 
-// --- Scraping Actions Test: QueryWeb ---
-func TestQueryWebAction(t *testing.T) {
-
+func TestExecuteActionRejectsUnknownAction(t *testing.T) {
 	a := setupTestEnv(t)
-	params := map[string]interface{}{
-		"queries":      []string{"openai gpt"},
-		"result_limit": 2,
-	}
-	result, err := a.ExecuteAction("query_web", params)
-	if err != nil {
-		t.Errorf("query_web action failed: %v", err)
-	}
-	results, ok := result["results"].(map[string]interface{})
-	if !ok || len(results) == 0 {
-		t.Errorf("expected non-empty results from query_web")
+	result, err := a.ExecuteAction("not_a_real_action", map[string]interface{}{})
+	if err == nil || result.Success || result.Error == "" {
+		t.Fatalf("expected an actionable unknown-action error, got %#v / %v", result, err)
 	}
 }
 
-func TestQueryWebAction_MultiQuery(t *testing.T) {
+func TestActionCatalogHasNoLegacyYAMLTools(t *testing.T) {
 	a := setupTestEnv(t)
-	params := map[string]interface{}{
-		"queries":      []string{"openai gpt", "github copilot", "chatbot ai"},
-		"result_limit": 2,
-	}
-	result, err := a.ExecuteAction("query_web", params)
-	if err != nil {
-		t.Errorf("query_web (multi) action failed: %v", err)
-	}
-	results, ok := result["results"].(map[string]interface{})
-	if !ok {
-		t.Errorf("expected map of results from query_web (multi)")
-	}
-	if len(results) != 3 {
-		t.Errorf("expected 3 results for 3 queries, got %d", len(results))
-	}
-	for _, q := range []string{"openai gpt", "github copilot", "chatbot ai"} {
-		if _, present := results[q]; !present {
-			t.Errorf("missing result for query '%s'", q)
+	for _, spec := range a.ListActions() {
+		if spec.Name == "fetch_file_structure_in_this_repo" || spec.Name == "read_files_in_this_repo" {
+			t.Fatalf("legacy action remained registered: %s", spec.Name)
+		}
+		if spec.Guidance == "" {
+			t.Fatalf("action %s is missing planner guidance", spec.Name)
 		}
 	}
 }

@@ -4,6 +4,7 @@ package core
 import (
 	"astra/astra/agents/actions"
 	"astra/astra/agents/configs"
+	"astra/astra/agents/prompts"
 	"astra/astra/services/llm"
 	"astra/astra/sources/psql/dao"
 	colorutil "astra/astra/utils/color"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	DefaultModel       = "gpt-4.1"
+	DefaultModel       = "gpt-5.6-luna"
 	DefaultMaxTokens   = 10000
 	DefaultTemp        = 0.1
 	NumRecentSummaries = 3 // Number of recent session summaries to inject into context
@@ -34,7 +35,8 @@ type BaseAgent struct {
 	Name           string
 	TenantID       int
 	UserID         int
-	LLM            *llm.GPTClient
+	LLM            llm.LLMClient
+	Model          string
 	Config         *configs.AgentConfig
 	ExecutionPlans []map[string]interface{}
 	RoughPlan      map[string]interface{}
@@ -50,6 +52,11 @@ type BaseAgent struct {
 }
 
 func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *BaseAgent {
+	return NewBaseAgentWithModel(userID, sessionID, agentName, db, llm.DefaultProvider(), llm.DefaultModel(llm.DefaultProvider()))
+}
+
+// NewBaseAgentWithModel creates an agent with an explicit provider/model pair.
+func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *gorm.DB, provider, model string) *BaseAgent {
 	cfg := configs.LoadConfig()
 	chatDAO := dao.NewChatMessageDAO(db)
 	summaryDAO := dao.NewSessionSummaryDAO(db)
@@ -58,7 +65,8 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 		Name:        agentName,
 		TenantID:    userID,
 		UserID:      userID,
-		LLM:         llm.NewGPTClient(),
+		LLM:         llm.NewClient(provider),
+		Model:       model,
 		Config:      cfg,
 		SessionID:   sessionID,
 		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
@@ -71,7 +79,7 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 	}
 	logging.AppLogger.Info("BaseAgent initialized",
 		zap.Int("user_id", userID),
-		zap.String("agent_name", agentName),
+		zap.String("agent_name", agentName), zap.String("provider", provider), zap.String("model", model),
 	)
 	go agent.handleEvents()
 	return agent
@@ -242,10 +250,17 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		NumRecentSummaries,
 		recentSummaries,
 		jsonutils.ToJSON(a.getHistory()),
-		jsonutils.ToJSON(actionSummaries),
+		prompts.ActionCatalog(actionSummaries),
 		a.Config.DecisionProcess.Description,
-		a.Config.OutputFormats.PlanOutputJSON,
+		prompts.PlanSchema,
 		query,
+	)
+	systemPrompt = prompts.PlanningSystem(
+		a.Config.AgentName,
+		a.Config.AgentRole,
+		jsonutils.ToJSON(a.getHistory()),
+		prompts.ActionCatalog(actionSummaries),
+		prompts.PlanSchema,
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -266,11 +281,11 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 			- Any text outside the JSON is considered an error.
 		`,
 		query,
-		a.Config.OutputFormats.PlanOutputJSON,
+		prompts.PlanSchema,
 	)
 
 	req := llm.ChatRequest{
-		Model: DefaultModel,
+		Model: a.Model,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: user_message},
@@ -335,8 +350,14 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		jsonutils.ToJSON(roughPlan),
 		jsonutils.ToJSON(results),
 		a.Config.DecisionProcess.Description,
-		jsonutils.ToJSON(fullActions),
-		a.Config.OutputFormats.ExecutionStepOutputJSON,
+		prompts.ActionCatalog(fullActions),
+		prompts.ExecutionSchema,
+	)
+	systemPrompt = prompts.ExecutionSystem(
+		jsonutils.ToJSON(roughPlan),
+		jsonutils.ToJSON(results),
+		prompts.ActionCatalog(fullActions),
+		prompts.ExecutionSchema,
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -352,11 +373,11 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		- Any text outside the JSON is considered an error.
 		- Dont keep repeating any action - be sensible, you are not some small time rookie, you are supposed to my JARVIS
 		`,
-		a.Config.OutputFormats.ExecutionStepOutputJSON,
+		prompts.ExecutionSchema,
 	)
 
 	req := llm.ChatRequest{
-		Model: DefaultModel,
+		Model: a.Model,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -403,7 +424,8 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		})
 		results := []map[string]interface{}{}
 		stepIndex := 1
-		for {
+		const maxExecutionSteps = 12
+		for stepIndex <= maxExecutionSteps {
 			a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
 			expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
 			if expanded == nil {
@@ -433,7 +455,8 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 			var planToExec map[string]interface{} = expanded
 			step, ok := expanded["next_step"].(map[string]interface{})
 			if !ok {
-				fmt.Println("368 -- err")
+				ch <- a.formatEvent("error", map[string]interface{}{"message": "invalid execution plan: next_step is required"})
+				return
 			}
 			actionName, _ := step["action"].(string)
 			fmt.Println("action name .. ", actionName)
@@ -456,8 +479,9 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 						_ = json.Unmarshal(bytes, &params)
 					}
 				}
-				contextInfo := params["context"].(string)
-				goal := params["goal"].(string) + "Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
+				contextInfo, _ := params["context"].(string)
+				goal, _ := params["goal"].(string)
+				goal += " Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
 				finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
 				results = append(results, map[string]interface{}{
 					"step_index":    stepIndex,
@@ -505,6 +529,10 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 				"executed_plan": planToExec,
 				"result":        execRes,
 			})
+			stepIndex++
+		}
+		if stepIndex > maxExecutionSteps {
+			ch <- a.formatEvent("error", map[string]interface{}{"message": "execution stopped after reaching the safety limit"})
 		}
 		fullPlan := map[string]interface{}{
 			"rough_plan":      a.RoughPlan,
@@ -526,6 +554,7 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 		var utf8Buf string
 
 		for chunk := range respCh {
+			resp += chunk
 			utf8Buf += chunk
 
 			for utf8.ValidString(utf8Buf) {
@@ -657,9 +686,10 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 		jsonutils.ToJSON(a.ExecutionPlans),
 		jsonutils.ToJSON(results),
 	)
+	systemPrompt = prompts.ResponseSystem(query, jsonutils.ToJSON(results))
 	userMessage := fmt.Sprintf("Please generate the final reply to the user for query: %s Output Format RICH TEXT properly structured", query)
 	return llm.ChatRequest{
-		Model: DefaultModel,
+		Model: a.Model,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMessage},
@@ -737,7 +767,7 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
 	userPrompt := datePreamble + " Begin your internal reasoning stream now and if doing code edits. reason clearly what edit , where etc"
 	req := llm.ChatRequest{
-		Model: DefaultModel,
+		Model: a.Model,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -831,7 +861,7 @@ func (a *BaseAgent) readImageWithVision(
 		// userContentBytes, _ := json.Marshal(userContent)
 
 		req := llm.ChatRequest{
-			Model: "gpt-4.1-mini",
+			Model: a.Model,
 			Messages: []llm.Message{
 				{
 					Role:    "system",

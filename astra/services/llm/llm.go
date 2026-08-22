@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"strings"
 
 	"go.uber.org/zap"
@@ -19,7 +21,11 @@ type OllamaClient struct {
 }
 
 func NewOllamaClient() *OllamaClient {
-	return &OllamaClient{baseURL: "http://localhost:11434/api"}
+	baseURL := strings.TrimSuffix(os.Getenv("OLLAMA_BASE_URL"), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434/api"
+	}
+	return &OllamaClient{baseURL: baseURL}
 }
 
 type LLMClient interface {
@@ -28,7 +34,7 @@ type LLMClient interface {
 }
 
 func NewClient(provider string) LLMClient {
-	switch provider {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "gpt", "openai":
 		return NewGPTClient()
 	case "ollama":
@@ -37,6 +43,56 @@ func NewClient(provider string) LLMClient {
 		logging.AppLogger.Warn("Unknown LLM provider, defaulting to Ollama", zap.String("provider", provider))
 		return NewOllamaClient()
 	}
+}
+
+func DefaultModel(provider string) string {
+	if model := strings.TrimSpace(os.Getenv("ASTRA_LLM_MODEL")); model != "" {
+		return model
+	}
+	if strings.EqualFold(provider, "ollama") {
+		return "qwen3:14b"
+	}
+	return "gpt-5.6-luna"
+}
+
+func DefaultProvider() string {
+	if provider := strings.TrimSpace(os.Getenv("ASTRA_LLM_PROVIDER")); provider != "" {
+		return provider
+	}
+	return "ollama"
+}
+
+// ListOllamaModels returns installed local model names without requiring an LLM request.
+func ListOllamaModels(ctx context.Context) ([]string, error) {
+	baseURL := strings.TrimSuffix(os.Getenv("OLLAMA_BASE_URL"), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434/api"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Ollama model list failed: %s", response.Status)
+	}
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(payload.Models))
+	for _, model := range payload.Models {
+		models = append(models, model.Name)
+	}
+	return models, nil
 }
 
 type ChatRequest struct {
