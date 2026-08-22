@@ -42,11 +42,19 @@ type ActionSpec struct {
 }
 
 func NewDataActions(db *gorm.DB, userID int) *DataActions {
-	return NewDataActionsForSession(db, userID, "")
+	return NewDataActionsForSessionAt(db, userID, "", "")
 }
 
 func NewDataActionsForSession(db *gorm.DB, userID int, sessionID string) *DataActions {
-	ws, err := workspace.NewWorkspace("")
+	return NewDataActionsForSessionAt(db, userID, sessionID, "")
+}
+
+// NewDataActionsForSessionAt binds every filesystem and command action to the
+// same explicit root that the caller showed to the user. Keeping this root in
+// the action registry prevents the planner and executor from silently drifting
+// to a different process working directory.
+func NewDataActionsForSessionAt(db *gorm.DB, userID int, sessionID, workspaceRoot string) *DataActions {
+	ws, err := workspace.NewWorkspace(workspaceRoot)
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
 	}
@@ -67,10 +75,12 @@ func (a *DataActions) registerCoreActions() {
 	a.register(ActionSpec{Name: "write_artifact", Description: "Writes a durable user-facing artifact in a validated format.", Guidance: "Use this for useful deliverables from an interaction: Markdown for plans/notes/reports, JSON for structured state, JSONL for append-only events, CSV for tables, and text for simple output. Write a concise, complete artifact once the content is supported by evidence. Astra chooses the safe .astra/artifacts/session destination; do not use code-edit tools for user artifacts.", Params: WriteArtifactParams{}, handler: decodeHandler(a.WriteArtifact)})
 	a.register(ActionSpec{Name: "apply_code_edits", Description: "Preview or apply atomic, precise code edits.", Guidance: "Inspect the target first. Prefer replace, insert_before, insert_after, or delete with a unique match/anchor. Run dry_run first for risky edits. Do not use replace_file unless rewriting a complete file.", Params: ApplyCodeEditsParams{}, handler: decodeHandler(a.applyCodeEdits)})
 	a.register(ActionSpec{Name: "list_files", Description: "Lists repository files and metadata without reading their contents.", Guidance: "Use this to orient yourself. Search before reading unrelated files.", Params: ListFilesParams{}, handler: decodeHandler(a.ListFiles)})
+	a.register(ActionSpec{Name: "create_directory", Description: "Creates a directory tree inside the connected workspace.", Guidance: "Use this when bootstrapping a project or preparing a documented folder structure. Paths are relative to the connected workspace and parent directories are created safely.", Params: CreateDirectoryParams{}, handler: decodeHandler(a.CreateDirectory)})
 	a.register(ActionSpec{Name: "read_files", Description: "Reads one or more workspace files.", Guidance: "Read only files supported by search results or diagnostics. Prefer line ranges for large files.", Params: ReadFilesParams{}, handler: decodeHandler(a.ReadFilesInRepo)})
 	a.register(ActionSpec{Name: "search_code", Description: "Searches repository text and reports file, line, and snippet.", Guidance: "Use this before an edit to find the smallest relevant context. Search compiler symbols and error text first.", Params: SearchCodeParams{}, handler: decodeHandler(a.SearchCode)})
 	a.register(ActionSpec{Name: "inspect_file", Description: "Summarizes a Go source file: package, imports, declarations, and exported symbols.", Guidance: "Use this when you need structure, not full source text.", Params: InspectFileParams{}, handler: decodeHandler(a.InspectFile)})
-	a.register(ActionSpec{Name: "run_command", Description: "Runs a vetted command inside the workspace and captures stdout, stderr, exit code, and duration.", Guidance: "Use focused commands such as go test ./path, go build ./..., npm test, or git status. Always use output as evidence for the next step.", Params: RunCommandActionParams{}, handler: decodeHandler(a.RunCommand)})
+	a.register(ActionSpec{Name: "run_command", Description: "Runs an explicit command inside the connected workspace and captures stdout, stderr, exit code, and duration.", Guidance: "Use focused commands such as pwd, go test ./path, go build ./..., npm test, or git status. Commands receive argv-style arguments and cannot escape the workspace working-directory boundary. Always use output as evidence for the next step.", Params: RunCommandActionParams{}, handler: decodeHandler(a.RunCommand)})
+	a.register(ActionSpec{Name: "run_commands", Description: "Runs an ordered sequence of explicit commands, each with its own working directory and timeout.", Guidance: "Use this for a small, related workflow such as inspect a directory, create a project, and run its validator. Prefer separate argv-style commands over shell strings. The sequence stops on the first failure unless continue_on_error is true.", Params: RunCommandsParams{}, handler: decodeHandler(a.RunCommands)})
 	a.register(ActionSpec{Name: "build_project", Description: "Builds the Go workspace and returns compiler diagnostics.", Guidance: "Run after code edits. Repair the reported file and line rather than exploring unrelated code.", Params: struct{}{}, handler: decodeHandler(a.BuildProject)})
 	a.register(ActionSpec{Name: "run_tests", Description: "Runs the Go test suite and returns failures with diagnostics.", Guidance: "Run after a change. Use a focused package test when the failing package is known.", Params: RunTestsParams{}, handler: decodeHandler(a.RunTests)})
 	a.register(ActionSpec{Name: "git_status", Description: "Reports changed, staged, and untracked files.", Guidance: "Check this before broad edits and when preparing a summary.", Params: struct{}{}, handler: decodeHandler(a.GitStatus)})

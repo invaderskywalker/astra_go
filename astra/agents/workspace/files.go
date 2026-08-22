@@ -147,6 +147,17 @@ func (w *Workspace) CreateFile(path string, data []byte) error {
 	return err
 }
 
+// CreateDirectory creates a directory tree inside the workspace. It is kept
+// separate from CreateFile so the planner can express project bootstrapping
+// intent directly and the action log can describe it accurately.
+func (w *Workspace) CreateDirectory(path string) error {
+	absPath, err := w.abs(path)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(absPath, 0755)
+}
+
 func (w *Workspace) DeleteFile(path string) error {
 	absPath, err := w.abs(path)
 	if err != nil {

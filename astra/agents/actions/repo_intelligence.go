@@ -13,6 +13,9 @@ type ListFilesParams struct {
 type InspectFileParams struct {
 	Path string `json:"path"`
 }
+type CreateDirectoryParams struct {
+	Path string `json:"path"`
+}
 
 func (a *DataActions) ListFiles(params ListFilesParams) ActionResult {
 	files, err := a.workspace.ListFiles(params.Path, params.Recursive)
@@ -20,6 +23,16 @@ func (a *DataActions) ListFiles(params ListFilesParams) ActionResult {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
 	return ActionResult{Success: true, Summary: fmt.Sprintf("Listed %d entries", len(files)), Diagnostics: files}
+}
+
+func (a *DataActions) CreateDirectory(params CreateDirectoryParams) ActionResult {
+	if strings.TrimSpace(params.Path) == "" {
+		return ActionResult{Success: false, Error: "path is required"}
+	}
+	if err := a.workspace.CreateDirectory(params.Path); err != nil {
+		return ActionResult{Success: false, Error: fmt.Sprintf("create directory %s: %v", params.Path, err)}
+	}
+	return ActionResult{Success: true, Summary: "Directory ready: " + filepath.ToSlash(params.Path), FilesWritten: []string{filepath.ToSlash(params.Path)}}
 }
 
 func (a *DataActions) InspectFile(params InspectFileParams) ActionResult {

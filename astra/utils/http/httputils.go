@@ -3,6 +3,7 @@ package httputils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +13,23 @@ import (
 // PostJSON sends a standard POST request with a JSON body
 // and decodes the response into `resp` if provided.
 func PostJSON(url string, body interface{}, resp interface{}) error {
+	return PostJSONContext(context.Background(), url, body, resp)
+}
+
+// PostJSONContext is the cancellable form used by agent requests. The context
+// must reach the HTTP request so stopping an agent also stops local inference.
+func PostJSONContext(ctx context.Context, url string, body interface{}, resp interface{}) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	r, err := http.Post(url, "application/json", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -37,12 +49,23 @@ func PostJSON(url string, body interface{}, resp interface{}) error {
 // PostStream sends a POST request and returns the raw response body for streaming.
 // Caller is responsible for closing the returned io.ReadCloser.
 func PostStream(url string, body interface{}) (io.ReadCloser, error) {
+	return PostStreamContext(context.Background(), url, body)
+}
+
+// PostStreamContext returns a response body whose underlying request is
+// cancelled when ctx is cancelled.
+func PostStreamContext(ctx context.Context, url string, body interface{}) (io.ReadCloser, error) {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	r, err := http.Post(url, "application/json", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

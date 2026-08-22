@@ -12,6 +12,16 @@ type RunCommandActionParams struct {
 	WorkingDirectory string   `json:"working_directory,omitempty"`
 	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
 }
+type CommandRequest struct {
+	Command          string   `json:"command"`
+	Args             []string `json:"args,omitempty"`
+	WorkingDirectory string   `json:"working_directory,omitempty"`
+	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
+}
+type RunCommandsParams struct {
+	Commands        []CommandRequest `json:"commands"`
+	ContinueOnError bool             `json:"continue_on_error,omitempty"`
+}
 type RunTestsParams struct {
 	Package        string `json:"package,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
@@ -21,8 +31,49 @@ func (a *DataActions) RunCommand(params RunCommandActionParams) ActionResult {
 	if strings.TrimSpace(params.Command) == "" {
 		return ActionResult{Success: false, Error: "command is required"}
 	}
+	if err := validateCommandName(params.Command); err != nil {
+		return ActionResult{Success: false, Error: err.Error()}
+	}
 	result := a.workspace.RunCommand(workspace.RunCommandParams{Cmd: params.Command, Args: params.Args, Cwd: params.WorkingDirectory, TimeoutSec: params.TimeoutSeconds})
 	return commandResult(params.Command, result)
+}
+
+// RunCommands executes a deliberate sequence without forcing the model to
+// encode shell syntax. Each command keeps its own working directory and
+// timeout, and the action records every result in order.
+func (a *DataActions) RunCommands(params RunCommandsParams) ActionResult {
+	if len(params.Commands) == 0 {
+		return ActionResult{Success: false, Error: "commands must not be empty"}
+	}
+	results := make([]workspace.RunCommandResult, 0, len(params.Commands))
+	succeeded := 0
+	for index, command := range params.Commands {
+		if strings.TrimSpace(command.Command) == "" {
+			return ActionResult{Success: false, Error: fmt.Sprintf("commands[%d].command is required", index), Diagnostics: results}
+		}
+		if err := validateCommandName(command.Command); err != nil {
+			return ActionResult{Success: false, Error: fmt.Sprintf("commands[%d]: %v", index, err), Diagnostics: results}
+		}
+		result := a.workspace.RunCommand(workspace.RunCommandParams{
+			Cmd: command.Command, Args: command.Args, Cwd: command.WorkingDirectory, TimeoutSec: command.TimeoutSeconds,
+		})
+		results = append(results, result)
+		if result.Error != "" {
+			if !params.ContinueOnError {
+				return ActionResult{Success: false, Summary: fmt.Sprintf("Stopped after command %d failed", index+1), Diagnostics: results, Error: result.Error}
+			}
+			continue
+		}
+		succeeded++
+	}
+	return ActionResult{Success: succeeded == len(results), Summary: fmt.Sprintf("Completed %d/%d command(s)", succeeded, len(params.Commands)), Diagnostics: results}
+}
+
+func validateCommandName(command string) error {
+	if strings.ContainsAny(command, " \t\r\n;&|><") {
+		return fmt.Errorf("command must contain only the executable name; put arguments in args or use run_commands")
+	}
+	return nil
 }
 
 func (a *DataActions) BuildProject(_ struct{}) ActionResult {
@@ -44,7 +95,7 @@ func (a *DataActions) GitStatus(_ struct{}) ActionResult {
 func commandResult(command string, result workspace.RunCommandResult) ActionResult {
 	diagnostics := ParseGoDiagnostics(result.Stdout + "\n" + result.Stderr)
 	if result.Error != "" {
-		return ActionResult{Success: false, Summary: command + " failed", ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr, Diagnostics: diagnostics, Error: result.Error, Duration: result.Duration}
+		return ActionResult{Success: false, Summary: command + " failed", ExitCode: result.ExitCode, WorkingDirectory: result.WorkingDirectory, Stdout: result.Stdout, Stderr: result.Stderr, Diagnostics: diagnostics, Error: result.Error, Duration: result.Duration}
 	}
-	return ActionResult{Success: true, Summary: fmt.Sprintf("%s completed", command), ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr, Diagnostics: diagnostics, Duration: result.Duration}
+	return ActionResult{Success: true, Summary: fmt.Sprintf("%s completed", command), ExitCode: result.ExitCode, WorkingDirectory: result.WorkingDirectory, Stdout: result.Stdout, Stderr: result.Stderr, Diagnostics: diagnostics, Duration: result.Duration}
 }

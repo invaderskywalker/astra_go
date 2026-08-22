@@ -14,7 +14,7 @@ Check the installed CLI version:
 
 ```sh
 astra --version
-# Astra CLI v0.2.0
+# Astra CLI v0.2.1
 ```
 
 Show locally installed Ollama models plus the supported OpenAI options:
@@ -58,9 +58,20 @@ clear the draft, and `Ctrl-C` to cancel the draft.
 :pause                       Pause at the next safe agent checkpoint
 :resume                      Resume a paused agent
 :stop                        Cancel the active request safely
+:clear                       Cancel active work and discard all queued requests
 :attach /path/to/file         Safely attach an outside file
 :paste                        Start a multiline paste; finish with :endpaste
 ```
+
+Terminals that support bracketed paste can accept a multiline prompt directly:
+paste it into the input bar, then press Enter once. Astra keeps the entire
+paste as one request. `:paste` remains available as a manual fallback.
+
+During work, Astra displays each selected action, sanitized parameters, and a
+concise result. Those action audits are also recorded in the session evidence
+JSONL file. Commands can target nested project directories with
+`working_directory`; use `run_commands` when several related commands should
+run in order.
 
 Explicitly attached files are copied into `.astra/attachments/`. Very large
 single-line pastes are automatically saved there as text attachments and passed
@@ -120,7 +131,9 @@ astra models
 ```
 
 Then connect from any project directory. The directory where you run `astra
-connect` becomes the workspace Astra can inspect and modify:
+connect` becomes the default local workspace Astra can inspect and modify. Astra
+can also answer general questions, research the web, create file artifacts,
+retrieve linked memory, and run explicit commands inside that workspace:
 
 ```sh
 cd /path/to/any/project
@@ -132,6 +145,9 @@ The CLI still requires the configured PostgreSQL workflow dependencies; Ollama
 or an OpenAI API key provides the selected model.
 
 ## How Astra skills, prompts, and tools work
+
+See the living [capability map](docs/capabilities.md) for the current ability
+matrix, authority rules, evidence contracts, and roadmap.
 
 Astra does not currently have a separate plugin-style skill registry. Its
 capabilities are assembled in layers:

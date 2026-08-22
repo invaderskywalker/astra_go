@@ -55,6 +55,8 @@ func readRawInput(prompt string, output chan<- string) {
 	terminalRestore = func() { _ = restore() }
 	terminalRestoreMu.Unlock()
 	defer func() {
+		// Restore the terminal's normal paste behavior before leaving raw mode.
+		fmt.Print("\x1b[?2004l")
 		terminalRestoreMu.Lock()
 		terminalRestore = nil
 		terminalRestoreMu.Unlock()
@@ -68,6 +70,8 @@ func readRawInput(prompt string, output chan<- string) {
 	savedDraft := ""
 	previousLines := 1
 	escape := []byte{}
+	bracketedPaste := false
+	pasteData := []byte{}
 	redraw := func() { previousLines = redrawInput(prompt, buffer, cursor, previousLines) }
 	markEdited := func() {
 		if historyIndex < len(history) {
@@ -75,6 +79,10 @@ func readRawInput(prompt string, output chan<- string) {
 			historyIndex = len(history)
 		}
 	}
+	// Ask capable terminals to wrap clipboard pastes in \x1b[200~ / \x1b[201~.
+	// Without this, every newline in a pasted prompt looks like Enter and is
+	// submitted as a separate request.
+	fmt.Print("\x1b[?2004h")
 	redraw()
 	for {
 		var bytes [8]byte
@@ -87,11 +95,34 @@ func readRawInput(prompt string, output chan<- string) {
 		}
 		for i := 0; i < n; i++ {
 			key := bytes[i]
+			if bracketedPaste {
+				pasteData = append(pasteData, key)
+				const pasteEnd = "\x1b[201~"
+				if len(pasteData) >= len(pasteEnd) && string(pasteData[len(pasteData)-len(pasteEnd):]) == pasteEnd {
+					pasteData = pasteData[:len(pasteData)-len(pasteEnd)]
+					text := strings.ReplaceAll(string(pasteData), "\r\n", "\n")
+					text = strings.ReplaceAll(text, "\r", "\n")
+					if text != "" {
+						markEdited()
+						buffer = insertRunes(buffer, cursor, []rune(text))
+						cursor += utf8.RuneCountInString(text)
+						redraw()
+					}
+					pasteData = nil
+					bracketedPaste = false
+				}
+				continue
+			}
 			if len(escape) > 0 {
 				escape = append(escape, key)
 				if action, complete := parseEscape(escape); complete {
 					escape = nil
 					switch action {
+					case "paste_start":
+						bracketedPaste = true
+						pasteData = nil
+					case "paste_end":
+						bracketedPaste = false
 					case "up":
 						if len(history) > 0 {
 							if historyIndex == len(history) {
@@ -278,6 +309,10 @@ func parseEscape(sequence []byte) (string, bool) {
 	}
 	if final == '~' {
 		switch string(sequence) {
+		case "\x1b[200~":
+			return "paste_start", true
+		case "\x1b[201~":
+			return "paste_end", true
 		case "\x1b[1~", "\x1b[7~":
 			return "home", true
 		case "\x1b[4~", "\x1b[8~":

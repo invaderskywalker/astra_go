@@ -4,6 +4,7 @@ package core
 import (
 	"astra/astra/agents/actions"
 	"astra/astra/agents/prompts"
+	"astra/astra/agents/workspace"
 	"astra/astra/services/llm"
 	"astra/astra/sources/psql/dao"
 	"astra/astra/utils/jsonutils"
@@ -38,6 +39,7 @@ type BaseAgent struct {
 	ExecutionPlans []map[string]interface{}
 	RoughPlan      map[string]interface{}
 	SessionID      string
+	WorkspaceRoot  string
 	LogInfo        map[string]interface{}
 	dataActions    *actions.DataActions
 	stepCh         chan map[string]interface{}
@@ -65,24 +67,35 @@ func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *
 
 // NewBaseAgentWithModel creates an agent with an explicit provider/model pair.
 func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *gorm.DB, provider, model string) *BaseAgent {
+	return NewBaseAgentWithWorkspace(userID, sessionID, agentName, db, provider, model, "")
+}
+
+// NewBaseAgentWithWorkspace creates an agent whose model context and local
+// actions share one canonical workspace root.
+func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, db *gorm.DB, provider, model, workspaceRoot string) *BaseAgent {
+	ws, err := workspace.NewWorkspace(workspaceRoot)
+	if err != nil {
+		panic(fmt.Sprintf("initialize workspace: %v", err))
+	}
 	chatDAO := dao.NewChatMessageDAO(db)
 	summaryDAO := dao.NewSessionSummaryDAO(db)
 
 	agent := &BaseAgent{
-		Name:        agentName,
-		TenantID:    userID,
-		UserID:      userID,
-		LLM:         llm.NewClient(provider),
-		Model:       model,
-		SessionID:   sessionID,
-		LogInfo:     map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
-		stepCh:      make(chan map[string]interface{}, 10),
-		responseCh:  make(chan string, 10),
-		queryQueue:  make(chan queuedQuery, 32),
-		dataActions: actions.NewDataActionsForSession(db, userID, sessionID),
-		chatDAO:     chatDAO,
-		summaryDAO:  summaryDAO,
-		DB:          db,
+		Name:          agentName,
+		TenantID:      userID,
+		UserID:        userID,
+		LLM:           llm.NewClient(provider),
+		Model:         model,
+		SessionID:     sessionID,
+		WorkspaceRoot: ws.Root,
+		LogInfo:       map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
+		stepCh:        make(chan map[string]interface{}, 10),
+		responseCh:    make(chan string, 10),
+		queryQueue:    make(chan queuedQuery, 32),
+		dataActions:   actions.NewDataActionsForSessionAt(db, userID, sessionID, ws.Root),
+		chatDAO:       chatDAO,
+		summaryDAO:    summaryDAO,
+		DB:            db,
 	}
 	agent.controlCond = sync.NewCond(&agent.controlMu)
 	logging.AppLogger.Info("BaseAgent initialized",
@@ -286,6 +299,7 @@ func (a *BaseAgent) createRoughPlan(ctx context.Context, query string) (plan map
 		memoryContext,
 		prompts.ActionCatalog(actionSummaries),
 		prompts.PlanSchema,
+		a.WorkspaceRoot,
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -335,6 +349,7 @@ func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map
 		jsonutils.ToJSON(results),
 		prompts.ActionCatalog(fullActions),
 		prompts.ExecutionSchema,
+		a.WorkspaceRoot,
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -377,6 +392,21 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 	return ch
 }
 
+// ClearPending discards requests that have not reached the single worker yet.
+// Call Stop first when the active request should also be cancelled.
+func (a *BaseAgent) ClearPending() int {
+	cleared := 0
+	for {
+		select {
+		case request := <-a.queryQueue:
+			close(request.out)
+			cleared++
+		default:
+			return cleared
+		}
+	}
+}
+
 func (a *BaseAgent) runQuery(query string, ch chan string) {
 	ctx, cancel := a.beginRun()
 	defer cancel()
@@ -412,7 +442,9 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	a.status(ch, "Plan ready")
 	results := []map[string]interface{}{}
 	stepIndex := 1
-	const maxExecutionSteps = 12
+	// Keep requests bounded while leaving enough room for real workflows that
+	// orient, scaffold, validate, and document a project.
+	const maxExecutionSteps = 32
 	for stepIndex <= maxExecutionSteps {
 		if !a.checkpoint(ctx, ch) {
 			a.stopped(ch)
@@ -458,9 +490,11 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			a.stopped(ch)
 			return
 		}
+		displayStep := cloneActionStep(step)
 		ch <- a.formatEvent("action_plan", map[string]interface{}{
-			"index": stepIndex,
-			"step":  step,
+			"index":          stepIndex,
+			"workspace_root": a.WorkspaceRoot,
+			"step":           displayStep,
 		})
 		a.status(ch, fmt.Sprintf("Running %s", actionName))
 		if actionName == "think_aloud_reasoning" {
@@ -526,6 +560,20 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			return
 		}
 		execRes := a.executePlan(planToExec)
+		actionSummary := summarizeExecutionResult(execRes)
+		stepID, _ := step["step_id"].(string)
+		a.dataActions.RecordSessionEvent("action_execution", map[string]interface{}{
+			"step_index": stepIndex,
+			"action":     actionName,
+			"step_id":    stepID,
+			"params":     sanitizeActionParams(actionParamsFromStep(step)),
+			"result":     actionSummary,
+		})
+		ch <- a.formatEvent("action_result", map[string]interface{}{
+			"index":  stepIndex,
+			"action": actionName,
+			"result": actionSummary,
+		})
 		results = append(results, map[string]interface{}{
 			"step_index":    stepIndex,
 			"executed_plan": planToExec,
@@ -534,7 +582,10 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		stepIndex++
 	}
 	if stepIndex > maxExecutionSteps {
-		ch <- a.formatEvent("error", map[string]interface{}{"message": "execution stopped after reaching the safety limit"})
+		message := fmt.Sprintf("execution stopped after the %d-action safety limit; no completion claim was made", maxExecutionSteps)
+		a.storeState("execution_blocked", map[string]interface{}{"reason": message, "steps": len(a.ExecutionPlans)})
+		ch <- a.formatEvent("error", map[string]interface{}{"message": message, "next": "Ask Astra to continue from the recorded evidence."})
+		return
 	}
 	fullPlan := map[string]interface{}{
 		"rough_plan":      a.RoughPlan,
@@ -638,8 +689,107 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 	return results
 }
 
+func cloneActionStep(step map[string]interface{}) map[string]interface{} {
+	copyStep := make(map[string]interface{}, len(step))
+	for key, value := range step {
+		copyStep[key] = value
+	}
+	copyStep["action_params"] = sanitizeActionParams(actionParamsFromStep(step))
+	return copyStep
+}
+
+func actionParamsFromStep(step map[string]interface{}) map[string]interface{} {
+	if params, ok := step["action_params"].(map[string]interface{}); ok {
+		return params
+	}
+	params := map[string]interface{}{}
+	if step["action_params"] != nil {
+		encoded, _ := json.Marshal(step["action_params"])
+		_ = json.Unmarshal(encoded, &params)
+	}
+	return params
+}
+
+// sanitizeActionParams keeps the action audit useful without echoing secrets or
+// flooding the terminal with an entire source file or artifact body.
+func sanitizeActionParams(params map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(params))
+	for key, value := range params {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "password") || strings.Contains(lower, "api_key") {
+			result[key] = "[redacted]"
+			continue
+		}
+		if text, ok := value.(string); ok && len(text) > 1200 {
+			result[key] = fmt.Sprintf("%s… (%d chars)", text[:1200], len(text))
+			continue
+		}
+		result[key] = value
+	}
+	return result
+}
+
+func summarizeExecutionResult(execRes map[string]interface{}) map[string]interface{} {
+	summary := map[string]interface{}{}
+	results, ok := execRes["action_results"].(map[string]interface{})
+	if !ok {
+		return summary
+	}
+	for stepID, raw := range results {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		out, ok := entry["output"].(*actions.ActionResult)
+		if !ok || out == nil {
+			if errText, exists := entry["error"]; exists {
+				summary[stepID] = map[string]interface{}{"success": false, "error": errText}
+			}
+			continue
+		}
+		actionSummary := map[string]interface{}{
+			"success":           out.Success,
+			"summary":           out.Summary,
+			"error":             out.Error,
+			"working_directory": out.WorkingDirectory,
+			"exit_code":         out.ExitCode,
+			"stdout":            clipAuditText(out.Stdout),
+			"stderr":            clipAuditText(out.Stderr),
+			"files_read":        out.FilesRead,
+			"files_written":     out.FilesWritten,
+			"artifacts":         out.Artifacts,
+			"duration":          out.Duration.String(),
+		}
+		if commandResults, ok := out.Diagnostics.([]workspace.RunCommandResult); ok {
+			steps := make([]map[string]interface{}, 0, len(commandResults))
+			for _, command := range commandResults {
+				steps = append(steps, map[string]interface{}{
+					"command":           command.Command,
+					"working_directory": command.WorkingDirectory,
+					"exit_code":         command.ExitCode,
+					"stdout":            clipAuditText(command.Stdout),
+					"stderr":            clipAuditText(command.Stderr),
+					"error":             command.Error,
+					"duration":          command.Duration.String(),
+				})
+			}
+			actionSummary["commands"] = steps
+		}
+		summary[stepID] = actionSummary
+	}
+	return summary
+}
+
+func clipAuditText(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= 800 {
+		return text
+	}
+	return text[:800] + fmt.Sprintf("… (%d chars)", len(text))
+}
+
 func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query string) llm.ChatRequest {
-	systemPrompt := prompts.ResponseSystem(query, jsonutils.ToJSON(results))
+	systemPrompt := prompts.ResponseSystem(query, jsonutils.ToJSON(results), a.WorkspaceRoot)
 	userMessage := prompts.ResponseUser(query)
 	return llm.ChatRequest{
 		Model: a.Model,

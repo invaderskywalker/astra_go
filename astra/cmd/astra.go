@@ -110,7 +110,7 @@ func main() {
 		// --- Initialize agent ---
 		sessionID := fmt.Sprintf("cli-%s", uuid.New().String())
 		agentName := "astra"
-		agent := core.NewBaseAgentWithModel(user.ID, sessionID, agentName, db.DB, *provider, *model)
+		agent := core.NewBaseAgentWithWorkspace(user.ID, sessionID, agentName, db.DB, *provider, *model, dirPath)
 
 		logging.AppLogger.Info("Astra agent initialized in CLI",
 			zap.String("dir", dirPath),
@@ -130,7 +130,7 @@ func main() {
 		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
 		fmt.Println(colorutil.ColorInfo("  - Chat about ideas or get coding help with real-time edits\n"))
 		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit."))
-		fmt.Println(colorutil.ColorInfo("Enter send • Backspace delete • Ctrl-J new line • Ctrl-W delete word • Ctrl-U clear draft • Ctrl-C cancel draft\n"))
+		fmt.Println(colorutil.ColorInfo("Enter send • paste multiline text then press Enter once • Ctrl-J new line • Ctrl-W delete word • Ctrl-U clear draft • Ctrl-C cancel draft\n"))
 
 		// --- Interactive input + output multiplexer ---
 		// Input is read independently, so a new request can be submitted while a
@@ -353,7 +353,7 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 	command := strings.TrimPrefix(parts[0], ":")
 	switch command {
 	case "help":
-		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :pause, :resume, :stop, :help, :quit"))
+		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :pause, :resume, :stop, :clear, :help, :quit"))
 	case "pwd":
 		fmt.Println(dir)
 	case "model":
@@ -380,6 +380,14 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 			fmt.Println(colorutil.ColorWarning("Stop requested. Astra will cancel the active request safely."))
 		} else {
 			fmt.Println(colorutil.ColorInfo("No active request to stop."))
+		}
+	case "clear", "abort":
+		stopped := agent.Stop()
+		cleared := agent.ClearPending()
+		if stopped || cleared > 0 {
+			fmt.Printf(colorutil.ColorWarning("Cleared %d queued request(s); active request cancellation requested.\n"), cleared)
+		} else {
+			fmt.Println(colorutil.ColorInfo("No active or queued requests to clear."))
 		}
 	case "ls", "tree":
 		path := dir
@@ -537,6 +545,8 @@ func printCLIEvent(message string) {
 		}
 	case "action_plan":
 		printActionPlan(payload)
+	case "action_result":
+		printActionResult(payload)
 	case "error":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
@@ -660,6 +670,69 @@ func printActionPlan(payload map[string]interface{}) {
 	}
 	if expected := valueString(step["expected_observation"]); expected != "" {
 		printWrappedCLI("  │  Expect: ", expected, "  │          ")
+	}
+	if root := valueString(payload["workspace_root"]); root != "" {
+		printWrappedCLI("  │  Scope: ", root, "  │         ")
+	}
+	if params := step["action_params"]; params != nil {
+		encoded, err := json.Marshal(params)
+		if err == nil && string(encoded) != "{}" {
+			text := string(encoded)
+			if len(text) > 1400 {
+				text = text[:1400] + "…"
+			}
+			printWrappedCLI("  │  Params: ", text, "  │          ")
+		}
+	}
+}
+
+func printActionResult(payload map[string]interface{}) {
+	if payload == nil {
+		return
+	}
+	action := valueString(payload["action"])
+	results, _ := payload["result"].(map[string]interface{})
+	for _, raw := range results {
+		entry, _ := raw.(map[string]interface{})
+		if entry == nil {
+			continue
+		}
+		success, _ := entry["success"].(bool)
+		prefix := "✓ "
+		if !success {
+			prefix = "✗ "
+		}
+		message := valueString(entry["summary"])
+		if message == "" {
+			message = valueString(entry["error"])
+		}
+		if message == "" {
+			message = "completed"
+		}
+		if workingDirectory := valueString(entry["working_directory"]); workingDirectory != "" {
+			message += " @ " + workingDirectory
+		}
+		line := prefix + action + ": " + message
+		if success {
+			printCLIText(colorutil.ColorFinalSuccess(line))
+		} else {
+			printCLIText(colorutil.ColorError(line))
+		}
+		if commands, ok := entry["commands"].([]interface{}); ok {
+			for _, rawCommand := range commands {
+				command, _ := rawCommand.(map[string]interface{})
+				if command == nil {
+					continue
+				}
+				commandLine := fmt.Sprintf("  %s (%s)", valueString(command["command"]), valueString(command["working_directory"]))
+				if errText := valueString(command["error"]); errText != "" {
+					commandLine += " → " + errText
+				} else if stdout := valueString(command["stdout"]); stdout != "" {
+					commandLine += " → " + strings.ReplaceAll(stdout, "\r\n", " ")
+				}
+				printCLIText(colorutil.ColorInfo(commandLine))
+			}
+		}
 	}
 }
 

@@ -3,10 +3,29 @@ package prompts
 import "testing"
 
 func TestPlanningPromptIncludesMemoryAndArtifactPolicy(t *testing.T) {
-	prompt := PlanningSystem("Astra", "engineer", "history", "memory decision", "write_artifact", PlanSchema)
-	for _, expected := range []string{"<retrieved_memory>", "memory decision", "write_artifact", "current workspace evidence", "<skill_catalog>", "success_criteria", "stop_conditions"} {
+	prompt := PlanningSystem("Astra", "engineer", "history", "memory decision", "write_artifact", PlanSchema, "/tmp/astra-project")
+	for _, expected := range []string{"<retrieved_memory>", "memory decision", "write_artifact", "current workspace evidence", "<skill_catalog>", "<workspace_context>", "/tmp/astra-project", "success_criteria", "stop_conditions"} {
 		if !contains(prompt, expected) {
 			t.Fatalf("planning prompt missing %q", expected)
+		}
+	}
+}
+
+func TestWorkspaceContextDoesNotInventMissingRoot(t *testing.T) {
+	context := WorkspaceContext("")
+	if contains(context, "Connected workspace root: /tmp") {
+		t.Fatal("workspace context invented a path")
+	}
+	if !contains(context, "unavailable") {
+		t.Fatal("missing workspace context should be explicit")
+	}
+}
+
+func TestResponsePromptUsesConnectedRootForScopeQuestions(t *testing.T) {
+	prompt := ResponseSystem("Which directory can you work in?", "{}", "/Users/example/project")
+	for _, expected := range []string{"/Users/example/project", "exact connected workspace root", "workspace_context"} {
+		if !contains(prompt, expected) {
+			t.Fatalf("response prompt missing %q", expected)
 		}
 	}
 }

@@ -150,7 +150,7 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 	defer logging.LogDuration(ctx, "llm_service_run")()
 
 	var resp ChatResponse
-	if err := httputils.PostJSON(c.baseURL+"/chat", req, &resp); err != nil {
+	if err := httputils.PostJSONContext(ctx, c.baseURL+"/chat", req, &resp); err != nil {
 		return "", err
 	}
 	return extractTextContent(resp.Message.Content), nil
@@ -163,7 +163,7 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, error) {
 	defer logging.LogDuration(ctx, "llm_service_run_stream")()
 
-	body, err := httputils.PostStream(c.baseURL+"/chat", req)
+	body, err := httputils.PostStreamContext(ctx, c.baseURL+"/chat", req)
 	if err != nil {
 		return nil, err
 	}
