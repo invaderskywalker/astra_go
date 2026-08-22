@@ -6,9 +6,11 @@ import (
 	"astra/astra/agents/improvements"
 	"astra/astra/config"
 	"astra/astra/controllers"
+	"astra/astra/evals"
 	"astra/astra/services/llm"
 	"astra/astra/sources/psql"
 	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
 	"context"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -47,6 +50,10 @@ func main() {
 		runImprove(args[1:])
 		return
 	}
+	if len(args) >= 1 && args[0] == "eval" {
+		runEval(args[1:])
+		return
+	}
 	if len(args) >= 1 && args[0] == "models" {
 		printModels(ctx)
 		return
@@ -55,6 +62,7 @@ func main() {
 		connectFlags := flag.NewFlagSet("connect", flag.ExitOnError)
 		provider := connectFlags.String("provider", llm.DefaultProvider(), "LLM provider: ollama or openai")
 		model := connectFlags.String("model", "", "model name, e.g. qwen3:14b or gpt-5.6-luna")
+		plain := connectFlags.Bool("plain", false, "use the stream-friendly plain CLI instead of the full-screen cockpit")
 		_ = connectFlags.Parse(args[1:])
 		if *model == "" {
 			*model = llm.DefaultModel(*provider)
@@ -111,6 +119,9 @@ func main() {
 		sessionID := fmt.Sprintf("cli-%s", uuid.New().String())
 		agentName := "astra"
 		agent := core.NewBaseAgentWithWorkspace(user.ID, sessionID, agentName, db.DB, *provider, *model, dirPath)
+		if _, manifestErr := state.EnsureSession(dirPath, user.ID, sessionID, *provider, *model); manifestErr != nil {
+			logging.ErrorLogger.Warn("could not write session manifest", zap.Error(manifestErr))
+		}
 
 		logging.AppLogger.Info("Astra agent initialized in CLI",
 			zap.String("dir", dirPath),
@@ -121,6 +132,18 @@ func main() {
 		// --- macOS Notification + Log Session ---
 		sendMacNotification("🚀 Astra Agent Active", fmt.Sprintf("Session started in %s", dirPath))
 		logSession(dirPath, sessionID, user.ID)
+
+		// A real terminal gets the full-screen cockpit. Keeping the plain mode is
+		// important for pipes, CI, transcript capture, and users who prefer raw
+		// streaming output.
+		if !*plain && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+			if err := runAstraTUI(agent, dirPath, cfg.MindPalaceRoot, *provider, *model); err != nil {
+				logging.ErrorLogger.Warn("Astra cockpit exited with an error", zap.Error(err))
+			}
+			_ = state.CloseSession(dirPath, sessionID)
+			sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
+			return
+		}
 
 		// --- CLI Intro Message ---
 		fmt.Printf("%s", colorutil.ColorPrompt("\n🧑‍🚀 Astra is now connected in this directory!\n\n"))
@@ -188,6 +211,7 @@ func main() {
 					continue
 				}
 				if line == "exit" || line == "quit" {
+					_ = state.CloseSession(dirPath, sessionID)
 					sendMacNotification("👋 Astra Disconnected", fmt.Sprintf("Session ended in %s", dirPath))
 					fmt.Println(colorutil.ColorPrompt("👋 Goodbye!"))
 					break
@@ -198,7 +222,7 @@ func main() {
 					fmt.Println(colorutil.ColorInfo("Paste content now. Type :endpaste on its own line when finished."))
 					continue
 				}
-				handled, nextProvider, nextModel := handleCLICommand(line, dirPath, *provider, *model, agent, active)
+				handled, nextProvider, nextModel := handleCLICommand(line, dirPath, *provider, *model, agent, active, cfg.MindPalaceRoot)
 				if handled {
 					*provider, *model = nextProvider, nextModel
 					continue
@@ -218,6 +242,7 @@ func main() {
 				printCLIEvent(event.message)
 			}
 		}
+		_ = state.CloseSession(dirPath, sessionID)
 		restoreInteractiveTerminal()
 		os.Exit(0)
 
@@ -226,9 +251,59 @@ func main() {
 		fmt.Println(colorutil.ColorInfo("  astra --version"))
 		fmt.Println(colorutil.ColorInfo("  astra version"))
 		fmt.Println(colorutil.ColorInfo("  astra connect [--provider ollama|openai] [--model MODEL]"))
+		fmt.Println(colorutil.ColorInfo("                 [--plain]  # use the automation-friendly stream CLI"))
 		fmt.Println(colorutil.ColorInfo("  astra models    # Show local Ollama and supported cloud model choices"))
+		fmt.Println(colorutil.ColorInfo("  astra eval list|local [--root DIR]  # Run deterministic capability evaluations"))
 		fmt.Println(colorutil.ColorInfo("  astra improve scan|list|review|approve|reject  # Improvement proposal queue"))
 		os.Exit(1)
+	}
+}
+
+func runEval(args []string) {
+	if len(args) == 0 || args[0] == "list" {
+		fmt.Println(colorutil.ColorPrompt("Astra evaluation scenarios:"))
+		for _, scenario := range evals.BuiltinScenarios {
+			fmt.Printf("  %-24s [%s] %s\n", scenario.ID, scenario.Category, scenario.Name)
+		}
+		fmt.Println(colorutil.ColorInfo("Run `astra eval local` for deterministic action, artifact, memory, and prompt checks."))
+		return
+	}
+	if args[0] != "local" {
+		fmt.Println("Usage: astra eval list|local [--root DIR]")
+		return
+	}
+	flags := flag.NewFlagSet("eval local", flag.ContinueOnError)
+	root := flags.String("root", "", "temporary evaluation workspace; defaults to a new temp directory")
+	if err := flags.Parse(args[1:]); err != nil {
+		fmt.Println(colorutil.ColorError("Evaluation options: " + err.Error()))
+		return
+	}
+	evaluationRoot := strings.TrimSpace(*root)
+	if evaluationRoot == "" {
+		var err error
+		evaluationRoot, err = os.MkdirTemp("", "astra-eval-")
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not create evaluation workspace: " + err.Error()))
+			return
+		}
+	}
+	report := evals.RunLocal(evaluationRoot)
+	fmt.Printf("Astra local evaluation: %d passed, %d failed\n", report.Passed, report.Failed)
+	fmt.Println("Evaluation root: " + evaluationRoot)
+	for _, check := range report.Checks {
+		prefix := "✓"
+		if !check.Passed {
+			prefix = "✗"
+		}
+		line := fmt.Sprintf("%s %s — %s", prefix, check.ID, check.Summary)
+		if check.Evidence != "" {
+			line += " (" + check.Evidence + ")"
+		}
+		if check.Passed {
+			fmt.Println(colorutil.ColorFinalSuccess(line))
+		} else {
+			fmt.Println(colorutil.ColorError(line))
+		}
 	}
 }
 
@@ -345,15 +420,32 @@ func printModels(ctx context.Context) {
 	}
 }
 
-func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, active int) (bool, string, string) {
+func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, active int, roots ...string) (bool, string, string) {
 	if !strings.HasPrefix(line, ":") {
 		return false, provider, model
 	}
 	parts := strings.Fields(line)
 	command := strings.TrimPrefix(parts[0], ":")
+	memoryRoot := ""
+	if len(roots) > 0 {
+		memoryRoot = roots[0]
+	}
 	switch command {
 	case "help":
+		fmt.Println(colorutil.ColorInfo("Views: :chat, :dashboard, :workspace, :mindpalace, :sessions, :sync"))
 		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :pause, :resume, :stop, :clear, :help, :quit"))
+	case "chat":
+		printCLIText(colorutil.ColorPrompt("Chat mode active. Type a request or use :dashboard, :workspace, :mindpalace, :sessions, or :sync."))
+	case "dashboard":
+		printDashboard(dir, memoryRoot, provider, model, agent, active)
+	case "workspace":
+		printWorkspaceView(dir)
+	case "mindpalace", "memory":
+		printMindPalaceView(memoryRoot, agent.UserID)
+	case "sessions", "session":
+		printSessionsView(dir, memoryRoot, agent.UserID)
+	case "sync":
+		printSyncView(dir, memoryRoot)
 	case "pwd":
 		fmt.Println(dir)
 	case "model":

@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+func TestMigrateLegacyRootDoesNotOverwriteGlobalFiles(t *testing.T) {
+	legacy, global := t.TempDir(), t.TempDir()
+	legacyFile := filepath.Join(legacy, "users", "42", "memory", "decision", "legacy.md")
+	if err := os.MkdirAll(filepath.Dir(legacyFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyFile, []byte("legacy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	globalFile := filepath.Join(global, "users", "42", "memory", "decision", "legacy.md")
+	if err := os.MkdirAll(filepath.Dir(globalFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(globalFile, []byte("global"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLegacyRoot(legacy, global); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(globalFile)
+	if err != nil || string(data) != "global" {
+		t.Fatalf("global memory was overwritten: %q / %v", data, err)
+	}
+	entries, err := os.ReadDir(global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMarker := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".migrated-from-project-local-") {
+			foundMarker = true
+		}
+	}
+	if !foundMarker {
+		t.Fatal("migration marker was not written")
+	}
+}
+
 func TestStoreSavesSearchesAndLinksMemory(t *testing.T) {
 	store := New(t.TempDir(), 42, "session-1", nil)
 	first, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Backend", Summary: "Use Go", Content: "Build the backend in Go.", Tags: []string{"backend", "go"}})

@@ -14,7 +14,7 @@ Check the installed CLI version:
 
 ```sh
 astra --version
-# Astra CLI v0.2.1
+# Astra CLI v0.3.0
 ```
 
 Show locally installed Ollama models plus the supported OpenAI options:
@@ -38,8 +38,28 @@ astra connect --provider openai --model gpt-5.6-luna
 
 Other supported cloud choices are `gpt-5.6-terra` (balanced) and `gpt-5.6-sol` (highest capability).
 
-While connected, the CLI remains interactive while Astra works. Requests are
-queued in order and streamed as they complete. Use these local controls:
+On a real terminal, `connect` opens Astra's full-screen cockpit. It keeps the
+conversation, plan/tool transcript, input composer, and project views in
+separate regions so long prompts and streaming output cannot overwrite each
+other. The left rail contains Chat, Dashboard, Workspace, Mind Palace,
+Sessions, and Sync. Use `Ctrl+1` through `Ctrl+6` for direct navigation, or
+`Tab`/`Shift+Tab` to move between views.
+
+The Chat composer grows for multiline prompts. Press `Enter` to send and
+`Ctrl-J` to insert a newline. `Ctrl+P` pauses at a safe checkpoint, `Ctrl+R`
+resumes, `Ctrl+X` requests cancellation, and `Ctrl+Q` exits. Local commands
+such as `:model openai gpt-5.6-luna`, `:dashboard`, and `:attach <path>` work
+inside the cockpit as well.
+
+For pipes, CI, transcript capture, or the original stream-oriented experience,
+use `--plain`:
+
+```sh
+astra connect --plain --provider ollama --model qwen3:14b
+```
+
+The plain CLI remains interactive while Astra works. Requests are queued in
+order and streamed as they complete. Its local controls are:
 
 In a real terminal, the input bar supports editing. Press `Enter` to submit,
 `Backspace` to delete a character, `←`/`→` to move the cursor, `↑`/`↓` to
@@ -55,6 +75,12 @@ clear the draft, and `Ctrl-C` to cancel the draft.
 :model                        Show the active provider/model
 :model ollama qwen3:14b       Switch models when idle
 :model openai gpt-5.6-luna    Switch to Luna for future requests
+:chat                         Return to the normal conversation view
+:dashboard                    Show workspace, session, memory, artifact, and sync stats
+:workspace                    Browse the connected project workspace
+:mindpalace                   Browse the durable user Mind Palace
+:sessions                     Browse session evidence files
+:sync                         Show managed-file synchronization configuration/status
 :pause                       Pause at the next safe agent checkpoint
 :resume                      Resume a paused agent
 :stop                        Cancel the active request safely
@@ -147,7 +173,9 @@ or an OpenAI API key provides the selected model.
 ## How Astra skills, prompts, and tools work
 
 See the living [capability map](docs/capabilities.md) for the current ability
-matrix, authority rules, evidence contracts, and roadmap.
+matrix, authority rules, evidence contracts, and roadmap. The terminal layout,
+keyboard contract, and plain-mode boundary are documented in the [CLI cockpit
+guide](docs/cli-cockpit.md).
 
 Astra does not currently have a separate plugin-style skill registry. Its
 capabilities are assembled in layers:
@@ -178,7 +206,8 @@ action registry and authority policy remain the source of truth for permission.
 ## File-backed memory
 
 Learning is stored outside PostgreSQL. Astra writes a per-user mind palace under
-`$ASTRA_MIND_PALACE_DIR` (default: `.astra/mind-palace`) and mirrors it to the configured MinIO bucket.
+`$ASTRA_MIND_PALACE_DIR` (default: `~/.astra/mind-palace`) so it remains available
+across project directories and sessions, and mirrors it to the configured MinIO bucket.
 
 ```text
 users/{user_id}/
@@ -186,6 +215,15 @@ users/{user_id}/
   memory/{kind}/{memory_id}.md           # curated, linked memory blocks
   memory/index.json                       # retrieval index
 ```
+
+The connected project remains the local source-of-truth workspace. Astra-owned
+artifacts are stored below `.astra/artifacts/{session}/` and mirrored when
+MinIO is configured; arbitrary source files are never uploaded implicitly.
+
+Each connected project also receives `.astra/project.json` and a session
+manifest under `.astra/sessions/<session>/manifest.json`. These manifests make
+the active project, session files, artifacts, and durable user memory visible
+to the CLI views without loading every file into model context.
 
 The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
 Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.
@@ -213,3 +251,21 @@ astra improve reject imp_... --reason "Not valuable now"
 ```
 
 Every proposal includes evidence, a bounded action list, validation steps, risk, and a mandatory human-approval flag. The controlled branch/PR executor is intentionally a later phase.
+
+## Automated capability evaluations
+
+Astra includes a deterministic local evaluation gate and a reusable scenario
+catalog for provider-backed Luna/Qwen comparisons:
+
+```sh
+astra eval list
+astra eval local
+```
+
+The evaluator uses a temporary workspace by default and checks action contracts,
+all supported artifact formats, malformed-artifact rejection, nested workspace
+operations, command evidence, linked file-backed memory, and prompt catalogs.
+See [docs/evaluations.md](docs/evaluations.md) for the scenario contract and
+the quality dimensions for technical, architecture, code-structure, data, and
+memory artifacts. Model runs should score action traces and filesystem evidence
+instead of judging fluent responses alone.

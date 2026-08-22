@@ -37,6 +37,19 @@ func LoadConfig() Config {
 		}
 	}
 
+	mindPalaceRoot := getEnv("ASTRA_MIND_PALACE_DIR", "")
+	if mindPalaceRoot == "" {
+		// User memory is identity-scoped, not project-scoped. Keep it outside
+		// the connected repository so it remains available across projects and
+		// sessions. An explicit environment value still wins for deployments.
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			mindPalaceRoot = filepath.Join(homeDir, ".astra", "mind-palace")
+		} else {
+			mindPalaceRoot = filepath.Join(".astra", "mind-palace")
+		}
+	}
+
 	return Config{
 		DBUser:         getEnv("DB_USER", ""),
 		DBPassword:     getEnv("DB_PASSWORD", ""),
@@ -48,7 +61,7 @@ func LoadConfig() Config {
 		MinIOAccessKey: getEnv("MINIO_ACCESS_KEY", ""),
 		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", ""),
 		MinIOBucket:    getEnv("MINIO_BUCKET", ""),
-		MindPalaceRoot: getEnv("ASTRA_MIND_PALACE_DIR", ".astra/mind-palace"),
+		MindPalaceRoot: mindPalaceRoot,
 	}
 }
 

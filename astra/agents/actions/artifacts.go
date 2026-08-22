@@ -1,11 +1,14 @@
 package actions
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -37,7 +40,54 @@ func (a *DataActions) WriteArtifact(params WriteArtifactParams) ActionResult {
 	if err := a.workspace.CreateFile(path, []byte(params.Content)); err != nil {
 		return ActionResult{Success: false, Error: fmt.Sprintf("write artifact: %v", err)}
 	}
-	return ActionResult{Success: true, Summary: "Artifact written: " + path, FilesWritten: []string{path}, Artifacts: []string{path}}
+	warnings := a.syncManagedFile(path, []byte(params.Content), artifactContentType(format))
+	return ActionResult{Success: true, Summary: "Artifact written: " + path, FilesWritten: []string{path}, Artifacts: []string{path}, Warnings: warnings}
+}
+
+func artifactContentType(format string) string {
+	switch format {
+	case "json", "jsonl":
+		return "application/json"
+	case "csv":
+		return "text/csv"
+	case "text", "txt":
+		return "text/plain"
+	default:
+		return "text/markdown"
+	}
+}
+
+// syncManagedFile mirrors Astra-owned artifacts only. Source repositories are
+// never uploaded implicitly; a future explicit workspace-sync action can add
+// an approval boundary for that larger operation.
+func (a *DataActions) syncManagedFile(path string, data []byte, contentType string) []string {
+	key := filepath.ToSlash(filepath.Join("users", fmt.Sprintf("%d", a.UserID), "projects", safeSessionName(filepath.Base(a.workspace.Root)), "sessions", safeSessionName(a.memorySessionID()), strings.TrimPrefix(path, ".astra/")))
+	if a.mirror == nil {
+		a.writeSyncRecord(path, key, "local_only", "MinIO is not configured")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.mirror.PutObject(ctx, key, data, contentType); err != nil {
+		a.writeSyncRecord(path, key, "pending", err.Error())
+		return []string{"MinIO sync pending: " + err.Error()}
+	}
+	a.writeSyncRecord(path, key, "synced", "")
+	return nil
+}
+
+func (a *DataActions) writeSyncRecord(path, key, status, message string) {
+	record := map[string]any{"path": path, "object_key": key, "status": status, "message": message, "updated_at": time.Now().UTC()}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return
+	}
+	rel := filepath.ToSlash(filepath.Join(".astra", "sync", safeSessionName(a.memorySessionID()), artifactName(filepath.Base(path))+".json"))
+	absolute := filepath.Join(a.workspace.Root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(absolute), 0755); err != nil {
+		return
+	}
+	_ = os.WriteFile(absolute, append(data, '\n'), 0644)
 }
 
 func (a *DataActions) memorySessionID() string { return a.memory.SessionID() }

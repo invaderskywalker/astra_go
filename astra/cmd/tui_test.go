@@ -1,0 +1,50 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestTUIPlanFormattingIsReadable(t *testing.T) {
+	text := formatTUIPlan(map[string]interface{}{
+		"mode":                               "task",
+		"goal":                               "Inspect the repository and report evidence",
+		"selected_skills":                    []interface{}{"repository_intelligence"},
+		"mind_map_steps_in_natural_language": []interface{}{"List the root", "Detect the stack"},
+		"success_criteria":                   []interface{}{"No unsupported claims"},
+	})
+	for _, want := range []string{"Mode: task", "Goal: Inspect", "Mind map:", "1. List the root", "No unsupported claims"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("formatted plan missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestTUICollectFilesSkipsCachesAndSorts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "z.md"), []byte("z"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.md"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "ignored.js"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	files := collectTUIFiles(root)
+	if len(files) != 2 || !strings.Contains(files[0], "a.md") || !strings.Contains(files[1], "z.md") {
+		t.Fatalf("unexpected file view: %#v", files)
+	}
+}
+
+func TestTUIWrapNeverEmitsBlankLeadingLine(t *testing.T) {
+	wrapped := tuiWrap("one two three", 7)
+	if strings.HasPrefix(wrapped, "\n") || !strings.Contains(wrapped, "\n") {
+		t.Fatalf("expected wrapped text, got %q", wrapped)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type DataActions struct {
 	db        *gorm.DB
 	UserID    int
 	memory    *mindpalace.Store
+	mirror    *storage.MinIOClient
 	workspace *workspace.Workspace
 }
 
@@ -110,11 +112,18 @@ func NewDataActionsForSessionAt(db *gorm.DB, userID int, sessionID, workspaceRoo
 		panic(fmt.Sprintf("initialize workspace: %v", err))
 	}
 	cfg := config.LoadConfig()
+	// Preserve existing project-local memory when upgrading to the global
+	// user-owned Mind Palace root. The migration never overwrites newer global
+	// files and leaves the legacy copy recoverable.
+	legacyMemoryRoot := filepath.Join(ws.Root, ".astra", "mind-palace")
+	if legacyMemoryRoot != cfg.MindPalaceRoot {
+		_ = mindpalace.MigrateLegacyRoot(legacyMemoryRoot, cfg.MindPalaceRoot)
+	}
 	mirror, mirrorErr := storage.NewMinIOClient(cfg)
 	if mirrorErr != nil {
 		mirror = nil
 	}
-	a := &DataActions{actions: make(map[string]ActionSpec), db: db, UserID: userID, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID, mirror)}
+	a := &DataActions{actions: make(map[string]ActionSpec), db: db, UserID: userID, mirror: mirror, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID, mirror)}
 	a.registerCoreActions()
 	a.registerKnowledgeActions()
 	return a

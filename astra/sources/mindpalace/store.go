@@ -5,6 +5,8 @@ import (
 	"astra/astra/sources/storage"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,6 +43,54 @@ type Store struct {
 	userID    int
 	sessionID string
 	mirror    *storage.MinIOClient
+}
+
+// MigrateLegacyRoot copies the old project-local Mind Palace into the global
+// user root without overwriting existing files. It is intentionally a one-way
+// compatibility migration; the local source remains recoverable until the
+// user removes it.
+func MigrateLegacyRoot(legacyRoot, globalRoot string) error {
+	legacyRoot = filepath.Clean(legacyRoot)
+	globalRoot = filepath.Clean(globalRoot)
+	if legacyRoot == globalRoot {
+		return nil
+	}
+	if _, err := os.Stat(legacyRoot); os.IsNotExist(err) {
+		return nil
+	}
+	if err := os.MkdirAll(globalRoot, 0755); err != nil {
+		return err
+	}
+	digest := sha256.Sum256([]byte(legacyRoot))
+	marker := filepath.Join(globalRoot, ".migrated-from-project-local-"+hex.EncodeToString(digest[:])[:16])
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	err := filepath.Walk(legacyRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(legacyRoot, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		target := filepath.Join(globalRoot, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if _, statErr := os.Stat(target); statErr == nil {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0644)
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
 }
 
 func New(root string, userID int, sessionID string, mirror *storage.MinIOClient) *Store {
