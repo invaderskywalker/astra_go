@@ -17,6 +17,7 @@ type CommandRequest struct {
 	Args             []string `json:"args,omitempty"`
 	WorkingDirectory string   `json:"working_directory,omitempty"`
 	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
+	AllowFailure     bool     `json:"allow_failure,omitempty"`
 }
 type RunCommandsParams struct {
 	Commands        []CommandRequest `json:"commands"`
@@ -31,11 +32,17 @@ func (a *DataActions) RunCommand(params RunCommandActionParams) ActionResult {
 	if strings.TrimSpace(params.Command) == "" {
 		return ActionResult{Success: false, Error: "command is required"}
 	}
+	command, args, normalized := normalizeCommandInvocation(params.Command, params.Args)
+	params.Command, params.Args = command, args
 	if err := validateCommandName(params.Command); err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
 	result := a.workspace.RunCommand(workspace.RunCommandParams{Cmd: params.Command, Args: params.Args, Cwd: params.WorkingDirectory, TimeoutSec: params.TimeoutSeconds})
-	return commandResult(params.Command, result)
+	actionResult := commandResult(params.Command, result)
+	if normalized {
+		actionResult.Warnings = append(actionResult.Warnings, "normalized a whitespace-separated command into executable and arguments")
+	}
+	return actionResult
 }
 
 // RunCommands executes a deliberate sequence without forcing the model to
@@ -51,14 +58,18 @@ func (a *DataActions) RunCommands(params RunCommandsParams) ActionResult {
 		if strings.TrimSpace(command.Command) == "" {
 			return ActionResult{Success: false, Error: fmt.Sprintf("commands[%d].command is required", index), Diagnostics: results}
 		}
-		if err := validateCommandName(command.Command); err != nil {
+		executable, args, _ := normalizeCommandInvocation(command.Command, command.Args)
+		if err := validateCommandName(executable); err != nil {
 			return ActionResult{Success: false, Error: fmt.Sprintf("commands[%d]: %v", index, err), Diagnostics: results}
 		}
 		result := a.workspace.RunCommand(workspace.RunCommandParams{
-			Cmd: command.Command, Args: command.Args, Cwd: command.WorkingDirectory, TimeoutSec: command.TimeoutSeconds,
+			Cmd: executable, Args: args, Cwd: command.WorkingDirectory, TimeoutSec: command.TimeoutSeconds,
 		})
 		results = append(results, result)
 		if result.Error != "" {
+			if command.AllowFailure {
+				continue
+			}
 			if !params.ContinueOnError {
 				return ActionResult{Success: false, Summary: fmt.Sprintf("Stopped after command %d failed", index+1), Diagnostics: results, Error: result.Error}
 			}
@@ -70,10 +81,21 @@ func (a *DataActions) RunCommands(params RunCommandsParams) ActionResult {
 }
 
 func validateCommandName(command string) error {
-	if strings.ContainsAny(command, " \t\r\n;&|><") {
+	if strings.ContainsAny(command, "\t\r\n;&|><") {
 		return fmt.Errorf("command must contain only the executable name; put arguments in args or use run_commands")
 	}
 	return nil
+}
+
+func normalizeCommandInvocation(command string, args []string) (string, []string, bool) {
+	if len(args) > 0 || !strings.ContainsAny(command, " \t") {
+		return command, args, false
+	}
+	parts := strings.Fields(command)
+	if len(parts) < 2 {
+		return command, args, false
+	}
+	return parts[0], parts[1:], true
 }
 
 func (a *DataActions) BuildProject(_ struct{}) ActionResult {

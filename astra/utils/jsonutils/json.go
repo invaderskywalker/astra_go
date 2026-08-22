@@ -16,23 +16,43 @@ func ExtractJSON(input string) string {
 		return r
 	}, input))
 
-	// Case 1: fenced block
+	// Case 1: fenced block. Models sometimes include more than one fenced or
+	// raw JSON value; do not concatenate them into an invalid document.
 	reFence := regexp.MustCompile("(?s)```json(.*?)```")
 	if match := reFence.FindStringSubmatch(input); len(match) > 1 {
 		input = strings.TrimSpace(match[1])
-	} else {
-		// Case 2: raw object (greedy match from first { to last })
-		reObj := regexp.MustCompile(`(?s)\{.*\}`)
-		if match := reObj.FindString(input); match != "" {
-			input = strings.TrimSpace(match)
-		}
 	}
 
 	// 🔹 Remove inline // comments safely (but not in strings)
 	input = removeJSONComments(input)
+	if value := firstValidJSONValue(input); value != "" {
+		return value
+	}
 
 	input = CleanJSON(input)
 	return input
+}
+
+// firstValidJSONValue finds the first complete JSON object/array embedded in
+// model text. A greedy regular expression is unsafe here: if a model emits a
+// reasoning object followed by the final plan, it creates `}{` and the caller
+// receives the misleading "after top-level value" error.
+func firstValidJSONValue(input string) string {
+	for offset, char := range input {
+		if char != '{' && char != '[' {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(input[offset:]))
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			continue
+		}
+		if len(value) == 0 {
+			continue
+		}
+		return strings.TrimSpace(string(value))
+	}
+	return ""
 }
 
 // ToJSON serializes a Go value to a JSON string with indentation.

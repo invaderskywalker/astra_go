@@ -20,6 +20,10 @@ type CodeEdit struct {
 	Type        string `json:"type,omitempty"`
 	Replacement string `json:"replacement,omitempty"`
 	Content     string `json:"content,omitempty"`
+	// Natural-language aliases normalized before execution.
+	Path    string `json:"path,omitempty"`
+	Find    string `json:"find,omitempty"`
+	Replace string `json:"replace,omitempty"`
 }
 
 type ApplyCodeEditsParams struct {
@@ -64,10 +68,22 @@ func (a *DataActions) applyCodeEdits(params ApplyCodeEditsParams) ActionResult {
 }
 
 func toWorkspaceEdit(edit CodeEdit) (workspace.CodeEdit, error) {
-	if strings.TrimSpace(edit.File) == "" {
+	file := edit.File
+	if strings.TrimSpace(file) == "" {
+		file = edit.Path
+	}
+	if strings.TrimSpace(file) == "" {
 		return workspace.CodeEdit{}, fmt.Errorf("file is required")
 	}
-	result := workspace.CodeEdit{File: edit.File, Operation: edit.Operation, Anchor: edit.Anchor, Match: edit.Match, NewCode: edit.NewCode}
+	match := edit.Match
+	if match == "" {
+		match = edit.Find
+	}
+	newCode := edit.NewCode
+	if newCode == "" {
+		newCode = edit.Replace
+	}
+	result := workspace.CodeEdit{File: file, Operation: edit.Operation, Anchor: edit.Anchor, Match: match, NewCode: newCode}
 	// Backwards-compatible translations. New callers should use operation.
 	if result.Operation == "" {
 		switch edit.Type {

@@ -17,6 +17,34 @@ job while sharing one consistent operating policy.
 4. Response prompt — converts execution evidence into a truthful user handoff.
 5. `skills.go` — reusable competencies. Skills guide judgment; they do not grant
    tools or permissions.
+6. Action bookmarks and activation — the planner sees compact capability
+   bookmarks. Before a first tool call, `activate_actions` loads the selected
+   action's complete prose contract, parameter schema, examples, return shape,
+   side effects, approval rule, and failure recovery guidance. Activation is
+   limited to five actions per call. The runtime also auto-hydrates a skipped
+   activation as a safety fallback and records that event.
+7. Agent bookmarks — role-oriented groupings such as `repository_operator`,
+   `artifact_author`, and `verification_engineer`. These are routing hints,
+   not separate permission systems or hidden sub-agents.
+
+## Decision quality contract
+
+Prompt behavior is outcome-driven rather than repository-specific:
+
+- Explicit user acceptance criteria are binding. The planner identifies the
+  evidence that proves each criterion and selects the smallest sufficient set
+  of actions.
+- Negative claims require negative evidence. A listing establishes structure,
+  a read establishes contents, and a command establishes executable behavior;
+  none of these are interchangeable.
+- A task does not complete from an assumption when evidence is required. The
+  executor must orient or inspect first, unless the necessary evidence was
+  already supplied.
+- Clarification is a last-mile decision gate, not a substitute for safe
+  inspection. Astra asks only when a material choice cannot be resolved from
+  the request, evidence, conventions, or a reversible default.
+- Once acceptance criteria are satisfied, Astra stops. It does not explore
+  unrelated files or create extra reports merely because more tools exist.
 
 ## Context priority
 
@@ -33,3 +61,17 @@ test for the behavioral contract, and run `go test ./...`.
 
 The CLI may display plans and action summaries, but raw prompts, credentials,
 and unprocessed telemetry must never be sent to the user.
+
+## Tool documentation contract
+
+Every registered action has two code-owned views:
+
+- `ActionBookmark`: small enough to include on every planning turn (`name`,
+  category, purpose, when to use, risk, and related actions).
+- `ActionDocumentation`: loaded on demand and generated from the same action
+  registration (`parameters`, examples, return contract, side effects,
+  approval, and bounded failure recovery).
+
+This keeps prompts substantial and explicit without paying the context cost of
+every schema on every call. It also makes the action surface reviewable in Go,
+without a second YAML instruction language.

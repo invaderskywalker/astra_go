@@ -157,7 +157,9 @@ capabilities are assembled in layers:
 | Prompt policy | Sets behavior such as evidence-first edits and truthful reporting | One model call; defined in `astra/agents/prompts/prompts.go` |
 | Planner prompt | Chooses a sequence of actions for the user request | Planning call only |
 | Execution prompt | Chooses the next single tool call using the plan and results | One execution decision |
-| Action catalog | Describes the typed tools available to the model | Included in planning/execution calls |
+| Action bookmarks | Compact typed-tool choices shown to every planner; full contracts are loaded lazily | Included in planning/execution calls |
+| Action activation | Loads complete schema, examples, return shape, side effects, and recovery rules for up to five selected tools | One activation step, then retained for the current request |
+| Agent bookmarks | Groups related tools into routing roles such as repository operator or verifier | Planning context only; does not grant hidden permissions |
 | Action handler | Real Go code that reads, writes, searches, tests, or saves memory | Executes only when selected |
 | Mind Palace | Persists verified knowledge in local linked files | Durable until changed or removed |
 
@@ -167,12 +169,11 @@ tool changes the workspace. Only an explicit `save_memory` action creates a
 durable learning. The current action catalog is registered in
 `astra/agents/actions`; the implementation is in Go, not YAML.
 
-The next architectural milestone should be a first-class capability registry:
-each skill would declare its purpose, allowed tools, stage-specific prompt
-instructions, input/output artifact contracts, and validators. The first three
-should be `repository_navigation`, `file_artifacts`, and `mind_palace`. This
-will make Astra's abilities inspectable and composable without turning every
-request into one enormous system prompt.
+The action registry now has two views: compact bookmarks for discovery and
+full activation documentation for the tools selected next. This keeps prompts
+reviewable and powerful without injecting every parameter schema into every
+model call. Agent bookmarks provide role-oriented routing, while the runtime
+action registry and authority policy remain the source of truth for permission.
 
 ## File-backed memory
 

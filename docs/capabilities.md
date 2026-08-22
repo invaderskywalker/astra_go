@@ -28,12 +28,14 @@ and available actions—is injected into the prompts instead of being guessed.
 | Conversation | Answers questions and explains concepts without pretending tools ran | User-facing response | `astra/agents/prompts` and `BaseAgent` |
 | Workspace orientation | Lists files, creates directory trees, searches text, reads bounded files, and inspects Go structure | Paths, line ranges, snippets, diagnostics | `astra/agents/workspace`, `astra/agents/actions` |
 | Code delivery | Applies precise edits, then can build/test | Changed files plus validator output | `astra/agents/actions/edits.go`, `engineering.go` |
-| Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
+| Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output; expected non-zero checks can be marked | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
 | Web research | Searches current external information and scrapes supplied URLs when needed | Source URLs and extracted content | `astra/agents/actions/scraping_action.go` |
 | File artifacts | Writes validated Markdown, JSON, JSONL, CSV, or text to the session artifact area | Exact artifact path and format | `astra/agents/actions/artifacts.go` |
 | Mind Palace | Stores curated linked Markdown memory and append-only session evidence | Memory file, provenance, links | `astra/agents/actions/learning_knowledge.go`, `sources/mindpalace` |
 | Interactive CLI | Supports multiline editing, bracketed paste, history, queued requests, model switching, pause/resume/stop/clear | Terminal events and status | `astra/cmd` |
 | Self-improvement | Qwen can scan for one bounded proposal; Luna can review; human approves | Reviewable proposal file | `astra/agents/improvements` |
+| Action bookmarks | Every action has a compact bookmark; the executor activates full documentation for the next one to five tools and records fallback activation when needed | Bookmark catalog, activation report, action activation event | `astra/agents/actions/action_registry.go`, `astra/agents/prompts` |
+| Agent bookmarks | Main agent can route a request through role-oriented capability groupings without granting hidden permissions | Agent bookmark catalog in planning context | `astra/agents/prompts/agents.go` |
 
 ## Scope and authority
 
@@ -64,13 +66,21 @@ context.
 - `ResponseSystem` turns evidence into a clean handoff.
 - `skills.go` contains reusable judgment modules. A skill does not add tools or
   authority; it tells the planner how to use existing tools well.
+- `ActionCatalog` is the compact bookmark view. `activate_actions` and
+  `ActivatedActionDocumentation` provide full schemas only when needed.
+- `agents.go` groups related tools into role bookmarks. These are routing hints,
+  not independent agents or authorization grants.
+- Planning and execution use a general evidence contract: explicit acceptance
+  criteria drive the minimum action set, negative claims require supporting
+  checks, task mode cannot finish without required evidence, and clarification
+  is reserved for material unresolved decisions.
 
 This layered design keeps prompts substantial and reviewable without hiding
 behavior in small YAML fragments or silently changing the agent at runtime.
 
 ## Roadmap
 
-1. Add a first-class capability registry with per-capability validators and
+1. Add per-capability validators and
    artifact contracts.
 2. Add attachment metadata and explicit external-file import workflows.
 3. Add richer repository maps and dependency graphs to the file-backed mind
@@ -89,7 +99,7 @@ For an older binary, use `:stop`, exit Astra, rebuild, and restart. To unload a
 local Ollama model manually, inspect it with `ollama ps` and stop the named
 model with `ollama stop <model>`.
 
-Execution requests are bounded to 32 action turns per request. Reaching that
+Execution requests are bounded to 48 action turns per request. Reaching that
 bound is now reported as a blocker and does not produce a success/completion
 claim. This leaves room for real scaffold-and-verify workflows while preventing
 an accidental planner loop from running forever.

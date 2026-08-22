@@ -1,14 +1,55 @@
 package prompts
 
-import "testing"
+import (
+	"testing"
+
+	"astra/astra/agents/actions"
+)
 
 func TestPlanningPromptIncludesMemoryAndArtifactPolicy(t *testing.T) {
 	prompt := PlanningSystem("Astra", "engineer", "history", "memory decision", "write_artifact", PlanSchema, "/tmp/astra-project")
-	for _, expected := range []string{"<retrieved_memory>", "memory decision", "write_artifact", "current workspace evidence", "<skill_catalog>", "<workspace_context>", "/tmp/astra-project", "success_criteria", "stop_conditions"} {
+	for _, expected := range []string{"<retrieved_memory>", "memory decision", "write_artifact", "current workspace evidence", "<skill_catalog>", "<agent_bookmarks>", "<workspace_context>", "/tmp/astra-project", "success_criteria", "stop_conditions", "activate_actions", "minimum sufficient evidence", "acceptance criteria"} {
 		if !contains(prompt, expected) {
 			t.Fatalf("planning prompt missing %q", expected)
 		}
 	}
+}
+
+func TestPromptIncludesEvidenceAndClarificationGates(t *testing.T) {
+	planning := PlanningSystem("Astra", "engineer", "history", "memory", "list_files", PlanSchema, "/tmp/project")
+	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision"} {
+		if !contains(planning, expected) {
+			t.Fatalf("planning prompt missing decision rule %q", expected)
+		}
+	}
+	execution := ExecutionSystem("{\"mode\":\"task\"}", "{}", "list_files", ExecutionSchema, "/tmp/project")
+	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision", "Task completion gate"} {
+		if !contains(execution, expected) {
+			t.Fatalf("execution prompt missing decision rule %q", expected)
+		}
+	}
+}
+
+func TestActionCatalogIsCompactAndActivationIsDetailed(t *testing.T) {
+	a := setupTestActions(t)
+	compact := ActionCatalog(a.ListActions())
+	if contains(compact, "Parameters:") || !contains(compact, "run_commands") || !contains(compact, "Approval/risk:") {
+		t.Fatalf("action catalog should be compact bookmarks: %s", compact)
+	}
+	docs, _ := a.ActionDocumentation([]string{"run_commands"})
+	detailed := ActivatedActionDocumentation(docs)
+	for _, expected := range []string{"Parameters/schema:", "Examples:", "Returns:", "Failure recovery:", "run_commands"} {
+		if !contains(detailed, expected) {
+			t.Fatalf("activation docs missing %q: %s", expected, detailed)
+		}
+	}
+}
+
+// prompts tests use the same in-memory action registry as the runtime without
+// coupling the prompt package to a database implementation.
+func setupTestActions(t *testing.T) *actions.DataActions {
+	t.Helper()
+	return actions.NewDataActions(nil, 1)
 }
 
 func TestWorkspaceContextDoesNotInventMissingRoot(t *testing.T) {

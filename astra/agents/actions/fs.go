@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -12,6 +13,32 @@ type ReadFileParams struct {
 }
 type ReadFilesParams struct {
 	Files []ReadFileParams `json:"files"`
+}
+
+// UnmarshalJSON accepts both the canonical object form and the convenient
+// shorthand {"files":["README.md"]}. Models often produce the latter when
+// reading several known files; normalize it here instead of forcing a retry.
+func (p *ReadFilesParams) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Files []json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.Files = make([]ReadFileParams, 0, len(raw.Files))
+	for _, item := range raw.Files {
+		var object ReadFileParams
+		if err := json.Unmarshal(item, &object); err == nil && object.Path != "" {
+			p.Files = append(p.Files, object)
+			continue
+		}
+		var path string
+		if err := json.Unmarshal(item, &path); err != nil {
+			return fmt.Errorf("files entry must be a path string or object: %w", err)
+		}
+		p.Files = append(p.Files, ReadFileParams{Path: path})
+	}
+	return nil
 }
 
 func (a *DataActions) ReadFilesInRepo(params ReadFilesParams) ActionResult {

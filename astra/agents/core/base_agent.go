@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,29 +32,30 @@ const (
 )
 
 type BaseAgent struct {
-	Name           string
-	TenantID       int
-	UserID         int
-	LLM            llm.LLMClient
-	Model          string
-	ExecutionPlans []map[string]interface{}
-	RoughPlan      map[string]interface{}
-	SessionID      string
-	WorkspaceRoot  string
-	LogInfo        map[string]interface{}
-	dataActions    *actions.DataActions
-	stepCh         chan map[string]interface{}
-	responseCh     chan string
-	queryQueue     chan queuedQuery
-	mu             sync.Mutex
-	controlMu      sync.Mutex
-	controlCond    *sync.Cond
-	paused         bool
-	running        bool
-	cancelCurrent  context.CancelFunc
-	chatDAO        *dao.ChatMessageDAO
-	summaryDAO     *dao.SessionSummaryDAO
-	DB             *gorm.DB
+	Name             string
+	TenantID         int
+	UserID           int
+	LLM              llm.LLMClient
+	Model            string
+	ExecutionPlans   []map[string]interface{}
+	RoughPlan        map[string]interface{}
+	SessionID        string
+	WorkspaceRoot    string
+	LogInfo          map[string]interface{}
+	dataActions      *actions.DataActions
+	activatedActions map[string]bool
+	stepCh           chan map[string]interface{}
+	responseCh       chan string
+	queryQueue       chan queuedQuery
+	mu               sync.Mutex
+	controlMu        sync.Mutex
+	controlCond      *sync.Cond
+	paused           bool
+	running          bool
+	cancelCurrent    context.CancelFunc
+	chatDAO          *dao.ChatMessageDAO
+	summaryDAO       *dao.SessionSummaryDAO
+	DB               *gorm.DB
 }
 
 type queuedQuery struct {
@@ -81,21 +83,22 @@ func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, d
 	summaryDAO := dao.NewSessionSummaryDAO(db)
 
 	agent := &BaseAgent{
-		Name:          agentName,
-		TenantID:      userID,
-		UserID:        userID,
-		LLM:           llm.NewClient(provider),
-		Model:         model,
-		SessionID:     sessionID,
-		WorkspaceRoot: ws.Root,
-		LogInfo:       map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
-		stepCh:        make(chan map[string]interface{}, 10),
-		responseCh:    make(chan string, 10),
-		queryQueue:    make(chan queuedQuery, 32),
-		dataActions:   actions.NewDataActionsForSessionAt(db, userID, sessionID, ws.Root),
-		chatDAO:       chatDAO,
-		summaryDAO:    summaryDAO,
-		DB:            db,
+		Name:             agentName,
+		TenantID:         userID,
+		UserID:           userID,
+		LLM:              llm.NewClient(provider),
+		Model:            model,
+		SessionID:        sessionID,
+		WorkspaceRoot:    ws.Root,
+		LogInfo:          map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
+		stepCh:           make(chan map[string]interface{}, 10),
+		responseCh:       make(chan string, 10),
+		queryQueue:       make(chan queuedQuery, 32),
+		dataActions:      actions.NewDataActionsForSessionAt(db, userID, sessionID, ws.Root),
+		activatedActions: make(map[string]bool),
+		chatDAO:          chatDAO,
+		summaryDAO:       summaryDAO,
+		DB:               db,
 	}
 	agent.controlCond = sync.NewCond(&agent.controlMu)
 	logging.AppLogger.Info("BaseAgent initialized",
@@ -343,11 +346,15 @@ func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map
 	}()
 
 	fullActions := a.dataActions.ListActions()
+	actionCatalog := prompts.ActionCatalog(fullActions)
+	if docs := a.activatedActionDocs(); len(docs) > 0 {
+		actionCatalog += "\n\n<activated_action_docs>\n" + prompts.ActivatedActionDocumentation(docs) + "\n</activated_action_docs>"
+	}
 
 	systemPrompt := prompts.ExecutionSystem(
 		jsonutils.ToJSON(roughPlan),
 		jsonutils.ToJSON(results),
-		prompts.ActionCatalog(fullActions),
+		actionCatalog,
 		prompts.ExecutionSchema,
 		a.WorkspaceRoot,
 	)
@@ -418,6 +425,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	// Execution plans are per request. Keeping prior plans here makes later
 	// requests look as if they already performed actions they never performed.
 	a.ExecutionPlans = nil
+	a.activatedActions = make(map[string]bool)
 	a.storeState("user_query", query)
 	// Step 1: Create the rough plan
 	a.status(ch, "Understanding your request")
@@ -444,7 +452,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	stepIndex := 1
 	// Keep requests bounded while leaving enough room for real workflows that
 	// orient, scaffold, validate, and document a project.
-	const maxExecutionSteps = 32
+	const maxExecutionSteps = 48
 	for stepIndex <= maxExecutionSteps {
 		if !a.checkpoint(ctx, ch) {
 			a.stopped(ch)
@@ -497,6 +505,15 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			"step":           displayStep,
 		})
 		a.status(ch, fmt.Sprintf("Running %s", actionName))
+		// The model is instructed to activate documentation explicitly. If it
+		// skips that step, hydrate the contract automatically so a malformed
+		// bookmark-only call cannot cause an avoidable failure. The activation is
+		// recorded in the event stream and the docs are included on the next turn.
+		if actionName != "activate_actions" && actionName != "think_aloud_reasoning" && actionName != "read_image_with_vision" {
+			if a.ensureActionActivated(actionName, ch) == false {
+				return
+			}
+		}
 		if actionName == "think_aloud_reasoning" {
 			var params map[string]interface{}
 			if p, ok := step["action_params"].(map[string]interface{}); ok {
@@ -682,11 +699,46 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 		}
 		return
 	}
+	if actionName == "activate_actions" {
+		if report, ok := out.Diagnostics.(actions.ActivationReport); ok {
+			for _, doc := range report.Activated {
+				a.activatedActions[doc.Name] = true
+			}
+		}
+	}
 	results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
 		"status": "ok",
 		"output": out,
 	}
 	return results
+}
+
+func (a *BaseAgent) activatedActionDocs() []actions.ActionDocumentation {
+	names := make([]string, 0, len(a.activatedActions))
+	for name := range a.activatedActions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	docs, _ := a.dataActions.ActionDocumentation(names)
+	return docs
+}
+
+func (a *BaseAgent) ensureActionActivated(name string, ch chan<- string) bool {
+	if a.activatedActions[name] {
+		return true
+	}
+	docs, notFound := a.dataActions.ActionDocumentation([]string{name})
+	if len(docs) == 0 {
+		ch <- a.formatEvent("error", map[string]interface{}{"message": fmt.Sprintf("action %q is not registered; choose a name from the action bookmarks", name), "not_found": notFound})
+		return false
+	}
+	a.activatedActions[name] = true
+	ch <- a.formatEvent("action_activation", map[string]interface{}{
+		"actions": []string{name},
+		"mode":    "automatic_safety_fallback",
+		"message": "Full action documentation was loaded before execution because the planner skipped explicit activation.",
+	})
+	return true
 }
 
 func cloneActionStep(step map[string]interface{}) map[string]interface{} {

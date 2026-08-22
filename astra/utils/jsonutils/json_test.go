@@ -1,6 +1,7 @@
 package jsonutils
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -54,5 +55,27 @@ func TestExtractJSON_UTF8AndComments(t *testing.T) {
 	trimmed := strings.TrimSpace(output)
 	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
 		t.Fatalf("Output does not look like valid JSON:\n%s", output)
+	}
+}
+
+func TestExtractJSONUsesFirstCompleteValueWhenModelEmitsMultipleObjects(t *testing.T) {
+	input := `Reasoning before output
+{"mode":"task","goal":"inspect"}
+{"mode":"conversation","goal":"wrong second object"}`
+	got := ExtractJSON(input)
+	if got != `{"mode":"task","goal":"inspect"}` {
+		t.Fatalf("expected first complete JSON object, got %q", got)
+	}
+}
+
+func TestExtractJSONHandlesNestedBracesAndTrailingText(t *testing.T) {
+	input := "```json\n{\"mode\":\"task\",\"constraints\":[\"keep { braces }\"]}\n```\nextra"
+	got := ExtractJSON(input)
+	var value map[string]interface{}
+	if err := json.Unmarshal([]byte(got), &value); err != nil {
+		t.Fatalf("extracted JSON is invalid: %v (%q)", err, got)
+	}
+	if value["mode"] != "task" {
+		t.Fatalf("unexpected extracted value: %#v", value)
 	}
 }

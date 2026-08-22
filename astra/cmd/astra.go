@@ -545,6 +545,19 @@ func printCLIEvent(message string) {
 		}
 	case "action_plan":
 		printActionPlan(payload)
+	case "action_activation":
+		if payload != nil {
+			actions, _ := payload["actions"].([]interface{})
+			names := make([]string, 0, len(actions))
+			for _, raw := range actions {
+				if name, ok := raw.(string); ok && strings.TrimSpace(name) != "" {
+					names = append(names, name)
+				}
+			}
+			if len(names) > 0 {
+				printCLIText(colorutil.ColorInfo("↳ Loaded tool documentation: " + strings.Join(names, ", ")))
+			}
+		}
 	case "action_result":
 		printActionResult(payload)
 	case "error":
