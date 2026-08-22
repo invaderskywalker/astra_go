@@ -8,16 +8,6 @@ import (
 )
 
 type Config struct {
-	DBUser         string
-	DBPassword     string
-	DBHost         string
-	DBPort         string
-	DBName         string
-	JWTSecret      string
-	MinIOEndpoint  string
-	MinIOAccessKey string
-	MinIOSecretKey string
-	MinIOBucket    string
 	MindPalaceRoot string
 }
 
@@ -51,16 +41,6 @@ func LoadConfig() Config {
 	}
 
 	return Config{
-		DBUser:         getEnv("DB_USER", ""),
-		DBPassword:     getEnv("DB_PASSWORD", ""),
-		DBHost:         getEnv("DB_HOST", ""),
-		DBPort:         getEnv("DB_PORT", ""),
-		DBName:         getEnv("DB_NAME", ""),
-		JWTSecret:      getEnv("JWT_SECRET", ""),
-		MinIOEndpoint:  getEnv("MINIO_ENDPOINT", ""),
-		MinIOAccessKey: getEnv("MINIO_ACCESS_KEY", ""),
-		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", ""),
-		MinIOBucket:    getEnv("MINIO_BUCKET", ""),
 		MindPalaceRoot: mindPalaceRoot,
 	}
 }

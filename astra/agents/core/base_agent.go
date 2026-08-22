@@ -6,7 +6,7 @@ import (
 	"astra/astra/agents/prompts"
 	"astra/astra/agents/workspace"
 	"astra/astra/services/llm"
-	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/state"
 	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
@@ -21,7 +21,6 @@ import (
 	"unicode/utf8"
 
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 const (
@@ -53,9 +52,6 @@ type BaseAgent struct {
 	paused           bool
 	running          bool
 	cancelCurrent    context.CancelFunc
-	chatDAO          *dao.ChatMessageDAO
-	summaryDAO       *dao.SessionSummaryDAO
-	DB               *gorm.DB
 }
 
 type queuedQuery struct {
@@ -63,25 +59,24 @@ type queuedQuery struct {
 	out   chan string
 }
 
-func NewBaseAgent(userID int, sessionID string, agentName string, db *gorm.DB) *BaseAgent {
-	return NewBaseAgentWithModel(userID, sessionID, agentName, db, llm.DefaultProvider(), llm.DefaultModel(llm.DefaultProvider()))
+func NewBaseAgent(userID int, sessionID string, agentName string, _ any) *BaseAgent {
+	return NewBaseAgentWithModel(userID, sessionID, agentName, nil, llm.DefaultProvider(), llm.DefaultModel(llm.DefaultProvider()))
 }
 
 // NewBaseAgentWithModel creates an agent with an explicit provider/model pair.
-func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *gorm.DB, provider, model string) *BaseAgent {
-	return NewBaseAgentWithWorkspace(userID, sessionID, agentName, db, provider, model, "")
+// The ignored compatibility argument is retained for older API callers; the
+// active agent persists history and state in files.
+func NewBaseAgentWithModel(userID int, sessionID string, agentName string, _ any, provider, model string) *BaseAgent {
+	return NewBaseAgentWithWorkspace(userID, sessionID, agentName, nil, provider, model, "")
 }
 
 // NewBaseAgentWithWorkspace creates an agent whose model context and local
-// actions share one canonical workspace root.
-func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, db *gorm.DB, provider, model, workspaceRoot string) *BaseAgent {
+// actions share one canonical workspace root. Session history is file-backed.
+func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, _ any, provider, model, workspaceRoot string) *BaseAgent {
 	ws, err := workspace.NewWorkspace(workspaceRoot)
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
 	}
-	chatDAO := dao.NewChatMessageDAO(db)
-	summaryDAO := dao.NewSessionSummaryDAO(db)
-
 	agent := &BaseAgent{
 		Name:             agentName,
 		TenantID:         userID,
@@ -94,11 +89,8 @@ func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, d
 		stepCh:           make(chan map[string]interface{}, 10),
 		responseCh:       make(chan string, 10),
 		queryQueue:       make(chan queuedQuery, 32),
-		dataActions:      actions.NewDataActionsForSessionAt(db, userID, sessionID, ws.Root),
+		dataActions:      actions.NewDataActionsForSessionAt(nil, userID, sessionID, ws.Root),
 		activatedActions: make(map[string]bool),
-		chatDAO:          chatDAO,
-		summaryDAO:       summaryDAO,
-		DB:               db,
 	}
 	agent.controlCond = sync.NewCond(&agent.controlMu)
 	logging.AppLogger.Info("BaseAgent initialized",
@@ -263,15 +255,14 @@ func (a *BaseAgent) GenerateSessionSummary(query string, roughPlan interface{}, 
 
 // Fetch N most recent session summaries for this user.
 func (a *BaseAgent) GetRecentSessionSummaries(n int) ([]string, error) {
-	ctx := context.Background()
-	summaries, err := a.summaryDAO.ListRecentSessionSummaries(ctx, a.UserID, n)
+	history, err := state.ReadChatHistory(a.WorkspaceRoot, a.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]string, 0)
-	for _, ss := range summaries {
-		if ss.Summary != "" {
-			result = append(result, fmt.Sprintf("Session (%s): %s", ss.SessionID, ss.Summary))
+	result := make([]string, 0, n)
+	for i := len(history) - 1; i >= 0 && len(result) < n; i-- {
+		if content := strings.TrimSpace(history[i]["content"]); content != "" {
+			result = append(result, fmt.Sprintf("Session (%s): %s", a.SessionID, content))
 		}
 	}
 	return result, nil
@@ -855,22 +846,19 @@ func (a *BaseAgent) buildResponseReq(results map[string]interface{}, query strin
 
 func (a *BaseAgent) storeState(key string, value interface{}) {
 	a.dataActions.RecordSessionEvent(key, value)
-	ctx := context.Background()
 	contentBytes, err := json.Marshal(value)
 	if err != nil {
 		logging.ErrorLogger.Error("Failed to marshal state value", zap.String("key", key), zap.Error(err))
 		return
 	}
 	content := string(contentBytes)
-	_, err = a.chatDAO.SaveMessage(ctx, a.SessionID, a.UserID, key, content)
-	if err != nil {
-		logging.ErrorLogger.Error("Failed to save message", zap.String("key", key), zap.Error(err))
+	if err := state.AppendChatMessage(a.WorkspaceRoot, a.SessionID, key, content); err != nil {
+		logging.ErrorLogger.Error("Failed to save file-backed session message", zap.String("key", key), zap.Error(err))
 	}
 }
 
 func (a *BaseAgent) getHistory() []map[string]string {
-	ctx := context.Background()
-	history, err := a.chatDAO.GetChatHistoryBySession(ctx, a.SessionID)
+	history, err := state.ReadChatHistory(a.WorkspaceRoot, a.SessionID)
 	if err != nil {
 		return []map[string]string{}
 	}

@@ -8,6 +8,7 @@ import (
 	"astra/astra/agents/actions"
 	"astra/astra/agents/prompts"
 	"astra/astra/agents/workspace"
+	"astra/astra/sources/identity"
 	"astra/astra/sources/mindpalace"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,7 @@ var BuiltinScenarios = []Scenario{
 	{ID: "memory-network", Name: "Linked mind-palace memory", Category: "memory", Prompt: "Save a verified decision as file-backed memory, search it, and link it to a related knowledge block with provenance.", RequiredActions: []string{"activate_actions", "save_memory", "search_memory", "link_memory"}, MemoryRequired: true, MutatesWorkspace: true},
 	{ID: "command-evidence", Name: "Ordered command validation", Category: "verification", Prompt: "Run a short ordered set of explicit commands, capture each working directory, stdout, stderr, and exit code, and stop on completion.", RequiredActions: []string{"activate_actions", "run_commands"}},
 	{ID: "clarification-boundary", Name: "Necessary clarification only", Category: "reasoning", Prompt: "If the request contains a material unresolved choice, ask one focused question; otherwise proceed with safe inspection instead of asking a generic question.", RequiredActions: []string{"activate_actions"}},
+	{ID: "local-identity", Name: "Private single-user identity", Category: "security", Prompt: "Create one private local profile, require login, and retain no directory-derived account state.", RequiredActions: []string{"signup", "login"}, MutatesWorkspace: true},
 }
 
 type Check struct {
@@ -98,8 +100,19 @@ func RunLocal(root string) Report {
 	checkWorkspaceAndCommands(registry, add)
 	checkMemory(registry, add)
 	checkPromptContract(add)
+	checkLocalIdentity(root, add)
 	report.FinishedAt = time.Now().UTC()
 	return report
+}
+
+func checkLocalIdentity(root string, add func(string, bool, string, string)) {
+	store := identity.New(filepath.Join(root, ".astra", "identity"))
+	profile, signupErr := store.Signup("Evaluation owner", "eval@example.test", "correct-horse-battery")
+	_, loggedInErr := store.LoggedIn()
+	logoutErr := store.Logout()
+	_, afterLogoutErr := store.LoggedIn()
+	passed := signupErr == nil && profile.ID != "" && loggedInErr == nil && logoutErr == nil && afterLogoutErr == identity.ErrNotLoggedIn
+	add("local-identity", passed, "creates a private profile and enforces explicit login", store.Root())
 }
 
 func checkContracts(registry *actions.DataActions, add func(string, bool, string, string)) {

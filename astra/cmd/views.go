@@ -2,7 +2,6 @@ package main
 
 import (
 	"astra/astra/agents/core"
-	"astra/astra/config"
 	colorutil "astra/astra/utils/color"
 	"fmt"
 	"os"
@@ -96,20 +95,14 @@ func printSessionsView(root, memoryRoot string, userID int) {
 }
 
 func printSyncView(root, memoryRoot string) {
-	cfg := config.LoadConfig()
 	printViewHeader("Astra sync", root)
 	printKV("Mind Palace root", memoryRoot)
-	printKV("MinIO endpoint", valueOrView(cfg.MinIOEndpoint, "not configured"))
-	printKV("MinIO bucket", valueOrView(cfg.MinIOBucket, "not configured"))
+	printKV("Mode", "local files only")
 	printKV("Managed scope", "Mind Palace, session evidence, and artifacts")
 	syncFiles, _ := countFiles(filepath.Join(root, ".astra", "sync"))
 	printKV("Sync records", fmt.Sprintf("%d local records", syncFiles))
-	printKV("Source repository", "local by default; never uploaded implicitly")
-	if cfg.MinIOEndpoint == "" || cfg.MinIOBucket == "" {
-		printCLIText(colorutil.ColorWarning("Sync is local-only until MinIO endpoint and bucket are configured."))
-	} else {
-		printCLIText(colorutil.ColorInfo("Memory and managed artifacts use write-through sync; action warnings report failures."))
-	}
+	printKV("Source repository", "local; never exported implicitly")
+	printCLIText(colorutil.ColorInfo("External sync is disabled. Files are already durable on this machine."))
 }
 
 func printViewHeader(title, path string) {
@@ -182,13 +175,6 @@ func safeViewName(value string) string {
 		return ""
 	}
 	return strings.NewReplacer("/", "-", "\\", "-", "..", "-").Replace(value)
-}
-
-func valueOrView(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
 }
 
 func maxInt(a, b int) int {

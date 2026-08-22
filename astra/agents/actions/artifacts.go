@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -57,22 +56,17 @@ func artifactContentType(format string) string {
 	}
 }
 
-// syncManagedFile mirrors Astra-owned artifacts only. Source repositories are
-// never uploaded implicitly; a future explicit workspace-sync action can add
-// an approval boundary for that larger operation.
+// syncManagedFile records local ownership for Astra-managed artifacts. Source
+// repositories are never exported implicitly; a future explicit sync action
+// can add an approval boundary for a larger operation.
 func (a *DataActions) syncManagedFile(path string, data []byte, contentType string) []string {
-	key := filepath.ToSlash(filepath.Join("users", fmt.Sprintf("%d", a.UserID), "projects", safeSessionName(filepath.Base(a.workspace.Root)), "sessions", safeSessionName(a.memorySessionID()), strings.TrimPrefix(path, ".astra/")))
-	if a.mirror == nil {
-		a.writeSyncRecord(path, key, "local_only", "MinIO is not configured")
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := a.mirror.PutObject(ctx, key, data, contentType); err != nil {
-		a.writeSyncRecord(path, key, "pending", err.Error())
-		return []string{"MinIO sync pending: " + err.Error()}
-	}
-	a.writeSyncRecord(path, key, "synced", "")
+	// Artifacts remain local by default. A future explicit export/sync command
+	// may copy these managed files elsewhere, but writes never contact a remote
+	// service implicitly.
+	key := filepath.ToSlash(filepath.Join("local", "projects", safeSessionName(filepath.Base(a.workspace.Root)), "sessions", safeSessionName(a.memorySessionID()), strings.TrimPrefix(path, ".astra/")))
+	_ = data
+	_ = contentType
+	a.writeSyncRecord(path, key, "local_only", "External sync is disabled by default")
 	return nil
 }
 

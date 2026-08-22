@@ -5,7 +5,6 @@ import (
 	"astra/astra/agents/workspace"
 	"astra/astra/config"
 	"astra/astra/sources/mindpalace"
-	"astra/astra/sources/storage"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,19 +12,16 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type ActionHandler func(map[string]any) ActionResult
 
-// DataActions is a thin adapter between the planner and repository/database tools.
+// DataActions is a thin adapter between the planner and local repository,
+// command, artifact, and Mind Palace tools.
 type DataActions struct {
 	actions   map[string]ActionSpec
-	db        *gorm.DB
 	UserID    int
 	memory    *mindpalace.Store
-	mirror    *storage.MinIOClient
 	workspace *workspace.Workspace
 }
 
@@ -94,19 +90,21 @@ type ActionSpec struct {
 	handler         ActionHandler
 }
 
-func NewDataActions(db *gorm.DB, userID int) *DataActions {
-	return NewDataActionsForSessionAt(db, userID, "", "")
+// The first argument is retained as an ignored compatibility slot for older
+// callers. Astra's active runtime no longer opens or uses a database.
+func NewDataActions(_ any, userID int) *DataActions {
+	return NewDataActionsForSessionAt(nil, userID, "", "")
 }
 
-func NewDataActionsForSession(db *gorm.DB, userID int, sessionID string) *DataActions {
-	return NewDataActionsForSessionAt(db, userID, sessionID, "")
+func NewDataActionsForSession(_ any, userID int, sessionID string) *DataActions {
+	return NewDataActionsForSessionAt(nil, userID, sessionID, "")
 }
 
 // NewDataActionsForSessionAt binds every filesystem and command action to the
 // same explicit root that the caller showed to the user. Keeping this root in
 // the action registry prevents the planner and executor from silently drifting
 // to a different process working directory.
-func NewDataActionsForSessionAt(db *gorm.DB, userID int, sessionID, workspaceRoot string) *DataActions {
+func NewDataActionsForSessionAt(_ any, userID int, sessionID, workspaceRoot string) *DataActions {
 	ws, err := workspace.NewWorkspace(workspaceRoot)
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
@@ -119,11 +117,7 @@ func NewDataActionsForSessionAt(db *gorm.DB, userID int, sessionID, workspaceRoo
 	if legacyMemoryRoot != cfg.MindPalaceRoot {
 		_ = mindpalace.MigrateLegacyRoot(legacyMemoryRoot, cfg.MindPalaceRoot)
 	}
-	mirror, mirrorErr := storage.NewMinIOClient(cfg)
-	if mirrorErr != nil {
-		mirror = nil
-	}
-	a := &DataActions{actions: make(map[string]ActionSpec), db: db, UserID: userID, mirror: mirror, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID, mirror)}
+	a := &DataActions{actions: make(map[string]ActionSpec), UserID: userID, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID)}
 	a.registerCoreActions()
 	a.registerKnowledgeActions()
 	return a

@@ -7,7 +7,6 @@ package main
 
 import (
 	"astra/astra/agents/core"
-	"astra/astra/config"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -412,8 +411,9 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 func (m *tuiModel) resize() {
 	mainWidth := maxTUI(40, m.width-27)
 	mainHeight := maxTUI(8, m.height-11)
-	contentWidth := maxTUI(24, mainWidth-4)
-	m.viewport.Width, m.viewport.Height = contentWidth, mainHeight
+	contentWidth := maxTUI(24, mainWidth-6)
+	contentHeight := maxTUI(4, mainHeight-4)
+	m.viewport.Width, m.viewport.Height = contentWidth, contentHeight
 	m.input.SetWidth(contentWidth)
 	m.input.SetHeight(3)
 }
@@ -544,7 +544,7 @@ func (m *tuiModel) mindPalaceView() string {
 
 func (m *tuiModel) fileView(title, root, description string) string {
 	lines := []string{tuiStyleTitle.Render(title), description, "", tuiStyleMuted.Render(root), ""}
-	files := collectTUIFiles(root)
+	files := collectTUITree(root)
 	if len(files) == 0 {
 		lines = append(lines, tuiStyleMuted.Render("No files yet."))
 		return strings.Join(lines, "\n")
@@ -572,29 +572,19 @@ func (m *tuiModel) sessionsView() string {
 }
 
 func (m *tuiModel) syncView() string {
-	cfg := config.LoadConfig()
 	syncFiles, _ := countFiles(filepath.Join(m.root, ".astra", "sync"))
-	endpoint := cfg.MinIOEndpoint
-	if endpoint == "" {
-		endpoint = "not configured"
-	}
-	bucket := cfg.MinIOBucket
-	if bucket == "" {
-		bucket = "not configured"
-	}
 	lines := []string{
 		tuiStyleTitle.Render("SYNC & STORAGE"),
-		"Local files are the source of truth. MinIO is a mirror for managed memory and artifacts.",
+		"Local files are the source of truth. External sync is opt-in and currently disabled.",
 		"",
 		tuiMetric("Mind Palace root", m.memoryRoot),
-		tuiMetric("MinIO endpoint", endpoint),
-		tuiMetric("MinIO bucket", bucket),
+		tuiMetric("Mode", "local files only"),
 		tuiMetric("Sync records", fmt.Sprintf("%d local records", syncFiles)),
 		"",
 		tuiStyleSection.Render("POLICY"),
-		"  ✓ Memory and managed artifacts may sync write-through",
-		"  ✓ Every sync attempt leaves local status evidence",
-		"  ! Source repositories are never uploaded implicitly",
+		"  ✓ Memory, artifacts, and sessions stay on this machine",
+		"  ✓ Local status records explain every managed write",
+		"  ! Nothing is uploaded implicitly",
 	}
 	return strings.Join(lines, "\n")
 }
@@ -727,6 +717,35 @@ func collectTUIFiles(root string) []string {
 	return files
 }
 
+func collectTUITree(root string) []string {
+	var entries []string
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			rel, _ := filepath.Rel(root, path)
+			level := strings.Count(rel, string(os.PathSeparator)) + 1
+			entries = append(entries, fmt.Sprintf("%s📁 %s/", strings.Repeat("  ", level), filepath.Base(path)))
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		level := strings.Count(rel, string(os.PathSeparator))
+		entries = append(entries, fmt.Sprintf("%s📄 %s  %s", strings.Repeat("  ", level), filepath.Base(path), tuiStyleMuted.Render(humanTUISize(info.Size()))))
+		return nil
+	})
+	if len(entries) > 500 {
+		entries = append(entries[:500], tuiStyleMuted.Render("  … more entries omitted; use :tree for a bounded listing"))
+	}
+	return entries
+}
+
 func humanTUISize(size int64) string {
 	if size < 1024 {
 		return fmt.Sprintf("%d B", size)
@@ -816,8 +835,8 @@ var (
 	tuiStyleSidebarBox = lipgloss.NewStyle().Padding(1, 1).Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(lipgloss.Color("238"))
 	tuiStyleSidebar    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
 	tuiStyleSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Padding(0, 1)
-	tuiStyleMain       = lipgloss.NewStyle().Padding(1, 2)
-	tuiStyleComposer   = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), true, false, false, false).BorderForeground(lipgloss.Color("238"))
+	tuiStyleMain       = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
+	tuiStyleComposer   = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
 	tuiStyleFooter     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 1)
 	tuiStyleMuted      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	tuiStyleTitle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))

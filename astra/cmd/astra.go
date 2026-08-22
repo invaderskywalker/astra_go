@@ -5,11 +5,9 @@ import (
 	"astra/astra/agents/core"
 	"astra/astra/agents/improvements"
 	"astra/astra/config"
-	"astra/astra/controllers"
 	"astra/astra/evals"
 	"astra/astra/services/llm"
-	"astra/astra/sources/psql"
-	"astra/astra/sources/psql/dao"
+	"astra/astra/sources/identity"
 	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
@@ -44,6 +42,25 @@ func main() {
 	}
 	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
 		fmt.Printf("Astra CLI v%s\n", config.CLIVersion)
+		return
+	}
+	if len(args) >= 1 {
+		switch args[0] {
+		case "signup":
+			runSignup(args[1:])
+			return
+		case "login":
+			runLogin(args[1:])
+			return
+		case "logout":
+			runLogout()
+			return
+		case "whoami":
+			runWhoAmI()
+			return
+		}
+	}
+	if len(args) >= 1 && !requireAstraLogin() {
 		return
 	}
 	if len(args) >= 1 && args[0] == "improve" {
@@ -85,53 +102,29 @@ func main() {
 			fmt.Println()
 		}
 
-		// --- DB connection ---
-		db, err := psql.NewDatabase(ctx, cfg)
+		profile, err := identity.Default().LoggedIn()
 		if err != nil {
-			logging.ErrorLogger.Error("database connection error", zap.Error(err))
-			os.Exit(1)
-		}
-		defer db.Close()
-
-		// --- Setup DAO + Controller ---
-		userDAO := dao.NewUserDAO(db.DB)
-		userCtrl := controllers.NewUserController(userDAO)
-
-		// --- Try to find or create user based on dir path ---
-		user, err := userDAO.GetUserByUsername(ctx, dirPath)
-		if err != nil {
-			logging.ErrorLogger.Error("error fetching user", zap.Error(err))
-			os.Exit(1)
-		}
-		if user == nil {
-			email := fmt.Sprintf("%s@astra.local", filepath.Base(dirPath))
-			user, err = userCtrl.CreateUser(ctx, dirPath, email, nil, nil)
-			if err != nil {
-				logging.ErrorLogger.Error("error creating user", zap.Error(err))
-				os.Exit(1)
-			}
-			logging.AppLogger.Info("Created new Astra CLI user", zap.String("username", dirPath))
-		} else {
-			logging.AppLogger.Info("Found existing Astra CLI user", zap.Int("id", user.ID))
+			fmt.Println("Astra is locked: " + err.Error())
+			return
 		}
 
 		// --- Initialize agent ---
 		sessionID := fmt.Sprintf("cli-%s", uuid.New().String())
 		agentName := "astra"
-		agent := core.NewBaseAgentWithWorkspace(user.ID, sessionID, agentName, db.DB, *provider, *model, dirPath)
-		if _, manifestErr := state.EnsureSession(dirPath, user.ID, sessionID, *provider, *model); manifestErr != nil {
+		agent := core.NewBaseAgentWithWorkspace(identity.LocalUserID, sessionID, agentName, nil, *provider, *model, dirPath)
+		if _, manifestErr := state.EnsureSession(dirPath, identity.LocalUserID, sessionID, *provider, *model); manifestErr != nil {
 			logging.ErrorLogger.Warn("could not write session manifest", zap.Error(manifestErr))
 		}
 
 		logging.AppLogger.Info("Astra agent initialized in CLI",
 			zap.String("dir", dirPath),
-			zap.Int("userID", user.ID),
+			zap.String("profileID", profile.ID),
 			zap.String("sessionID", sessionID), zap.String("provider", *provider), zap.String("model", *model),
 		)
 
 		// --- macOS Notification + Log Session ---
 		sendMacNotification("🚀 Astra Agent Active", fmt.Sprintf("Session started in %s", dirPath))
-		logSession(dirPath, sessionID, user.ID)
+		logSession(dirPath, sessionID, identity.LocalUserID)
 
 		// A real terminal gets the full-screen cockpit. Keeping the plain mode is
 		// important for pipes, CI, transcript capture, and users who prefer raw
@@ -147,7 +140,7 @@ func main() {
 
 		// --- CLI Intro Message ---
 		fmt.Printf("%s", colorutil.ColorPrompt("\n🧑‍🚀 Astra is now connected in this directory!\n\n"))
-		fmt.Printf(colorutil.ColorInfo("Session: %s\nUser ID: %d\nPath: %s\nModel: %s/%s\n\n"), sessionID, user.ID, dirPath, *provider, *model)
+		fmt.Printf(colorutil.ColorInfo("Session: %s\nUser: %s\nPath: %s\nModel: %s/%s\n\n"), sessionID, profile.Name, dirPath, *provider, *model)
 		fmt.Println(colorutil.ColorPrompt("You can:"))
 		fmt.Println(colorutil.ColorInfo("  - Ask for project bootstrapping (e.g., 'Create a new Vite + TS + Three.js frontend here')"))
 		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
@@ -249,7 +242,7 @@ func main() {
 	} else {
 		fmt.Println(colorutil.ColorPrompt("Astra CLI usage:"))
 		fmt.Println(colorutil.ColorInfo("  astra --version"))
-		fmt.Println(colorutil.ColorInfo("  astra version"))
+		fmt.Println(colorutil.ColorInfo("  astra signup | login | logout | whoami"))
 		fmt.Println(colorutil.ColorInfo("  astra connect [--provider ollama|openai] [--model MODEL]"))
 		fmt.Println(colorutil.ColorInfo("                 [--plain]  # use the automation-friendly stream CLI"))
 		fmt.Println(colorutil.ColorInfo("  astra models    # Show local Ollama and supported cloud model choices"))

@@ -2,7 +2,6 @@
 package mindpalace
 
 import (
-	"astra/astra/sources/storage"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -42,7 +41,6 @@ type Store struct {
 	root      string
 	userID    int
 	sessionID string
-	mirror    *storage.MinIOClient
 }
 
 // MigrateLegacyRoot copies the old project-local Mind Palace into the global
@@ -58,7 +56,7 @@ func MigrateLegacyRoot(legacyRoot, globalRoot string) error {
 	if _, err := os.Stat(legacyRoot); os.IsNotExist(err) {
 		return nil
 	}
-	if err := os.MkdirAll(globalRoot, 0755); err != nil {
+	if err := os.MkdirAll(globalRoot, 0700); err != nil {
 		return err
 	}
 	digest := sha256.Sum256([]byte(legacyRoot))
@@ -76,7 +74,7 @@ func MigrateLegacyRoot(legacyRoot, globalRoot string) error {
 		}
 		target := filepath.Join(globalRoot, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, 0755)
+			return os.MkdirAll(target, 0700)
 		}
 		if _, statErr := os.Stat(target); statErr == nil {
 			return nil
@@ -85,16 +83,16 @@ func MigrateLegacyRoot(legacyRoot, globalRoot string) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0644)
+		return os.WriteFile(target, data, 0600)
 	})
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
+	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0600)
 }
 
-func New(root string, userID int, sessionID string, mirror *storage.MinIOClient) *Store {
-	return &Store{root: root, userID: userID, sessionID: sessionID, mirror: mirror}
+func New(root string, userID int, sessionID string, _ ...any) *Store {
+	return &Store{root: root, userID: userID, sessionID: sessionID}
 }
 func (s *Store) SessionID() string { return s.sessionID }
 func (s *Store) userRoot() string  { return filepath.Join(s.root, "users", fmt.Sprintf("%d", s.userID)) }
@@ -103,11 +101,6 @@ func (s *Store) lockPath() string  { return filepath.Join(s.userRoot(), "memory"
 func (s *Store) sessionPath() string {
 	return filepath.Join(s.userRoot(), "sessions", safeName(s.sessionID), "events.jsonl")
 }
-func (s *Store) objectKey(path string) string {
-	rel, _ := filepath.Rel(s.root, path)
-	return filepath.ToSlash(filepath.Join("mind-palace", rel))
-}
-
 func (s *Store) Save(ctx context.Context, record Record) (Record, []string, error) {
 	if strings.TrimSpace(record.Kind) == "" || strings.TrimSpace(record.Title) == "" || strings.TrimSpace(record.Content) == "" {
 		return Record{}, nil, fmt.Errorf("kind, title, and content are required")
@@ -419,10 +412,10 @@ func (s *Store) AppendSessionEvent(ctx context.Context, eventType string, payloa
 	}
 	path := s.sessionPath()
 	if err := s.withIndexLock(ctx, func() error {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
-		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}
@@ -452,25 +445,11 @@ func (s *Store) loadIndex() (Index, error) {
 	return index, nil
 }
 func (s *Store) sync(ctx context.Context, paths ...string) []string {
-	if s.mirror == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	warnings := []string{}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			contentType := "text/markdown"
-			if filepath.Ext(path) == ".json" {
-				contentType = "application/json"
-			}
-			if err := s.mirror.PutObject(ctx, s.objectKey(path), data, contentType); err != nil {
-				warnings = append(warnings, "MinIO sync pending: "+err.Error())
-			}
-		}
-	}
-	return warnings
+	// Files are the source of truth. External synchronization is deliberately
+	// opt-in and is no longer attempted during memory writes.
+	_ = ctx
+	_ = paths
+	return nil
 }
 func newMemoryID() string {
 	bytes := make([]byte, 8)
@@ -492,7 +471,7 @@ func appendUnique(values []string, value string) []string {
 }
 
 func (s *Store) withIndexLock(ctx context.Context, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath()), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.lockPath()), 0700); err != nil {
 		return err
 	}
 	deadline := time.NewTimer(10 * time.Second)
@@ -545,7 +524,7 @@ func render(record Record, index Index) string {
 	return fmt.Sprintf("<!-- astra-memory\n%s\n-->\n\n# %s\n\n%s\n\n## Related memory\n%s", metadata, record.Title, record.Content, links.String())
 }
 func writeAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".astra-write-*")
@@ -558,7 +537,7 @@ func writeAtomic(path string, data []byte) error {
 		temporary.Close()
 		return err
 	}
-	if err := temporary.Chmod(0644); err != nil {
+	if err := temporary.Chmod(0600); err != nil {
 		temporary.Close()
 		return err
 	}

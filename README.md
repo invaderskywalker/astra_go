@@ -1,11 +1,12 @@
 # Astra
 
-Astra is a Go-based engineering agent with a React frontend. It can operate with a local Ollama model or an OpenAI model.
+Astra is a Go-based local-first engineering agent with a professional terminal
+cockpit. It can operate with a local Ollama model or an OpenAI model.
 
 ## Requirements
 
 - Go 1.25+
-- PostgreSQL and MinIO for the API/server workflow
+- A private local filesystem for the profile, Mind Palace, sessions, and artifacts
 - Ollama for local inference, or an `OPENAI_API_KEY` for OpenAI inference
 
 ## CLI model selection
@@ -14,7 +15,7 @@ Check the installed CLI version:
 
 ```sh
 astra --version
-# Astra CLI v0.3.0
+# Astra CLI v0.5.0
 ```
 
 Show locally installed Ollama models plus the supported OpenAI options:
@@ -37,6 +38,23 @@ astra connect --provider openai --model gpt-5.6-luna
 ```
 
 Other supported cloud choices are `gpt-5.6-terra` (balanced) and `gpt-5.6-sol` (highest capability).
+
+## Private local identity
+
+Astra is single-user and file-backed. Before using `connect`, `models`,
+`eval`, or improvement commands, create or unlock the private local profile:
+
+```sh
+astra signup                         # interactive; stored under ~/.astra/identity
+astra login                          # unlock the existing profile
+astra whoami
+astra logout
+```
+
+The profile and login marker are written with owner-only permissions. The
+connected directory never becomes an account, and no user row is created in a
+database. The Mind Palace is also local and private; external synchronization
+is disabled unless a future explicit export command is used.
 
 On a real terminal, `connect` opens Astra's full-screen cockpit. It keeps the
 conversation, plan/tool transcript, input composer, and project views in
@@ -116,14 +134,8 @@ export OLLAMA_BASE_URL=http://host:11434/api
 
 ```sh
 go test ./...
-go run astra/cmd/astra.go models
-go run astra/cmd/astra.go connect --provider ollama --model qwen3:14b
-```
-
-The API server starts with:
-
-```sh
-go run astra/main.go
+go run ./astra/cmd models
+go run ./astra/cmd connect --provider ollama --model qwen3:14b
 ```
 
 ## Build once, use the CLI anywhere
@@ -167,8 +179,8 @@ astra connect --provider ollama --model qwen3:14b
 ```
 
 Use `astra connect --provider openai --model gpt-5.6-luna` when you want Luna.
-The CLI still requires the configured PostgreSQL workflow dependencies; Ollama
-or an OpenAI API key provides the selected model.
+The CLI does not require PostgreSQL or MinIO. Ollama or an OpenAI API key
+provides the selected model.
 
 ## How Astra skills, prompts, and tools work
 
@@ -205,9 +217,10 @@ action registry and authority policy remain the source of truth for permission.
 
 ## File-backed memory
 
-Learning is stored outside PostgreSQL. Astra writes a per-user mind palace under
+Learning is stored outside any database. Astra writes a per-user mind palace under
 `$ASTRA_MIND_PALACE_DIR` (default: `~/.astra/mind-palace`) so it remains available
-across project directories and sessions, and mirrors it to the configured MinIO bucket.
+across project directories and sessions. It is local and owner-private; normal
+agent work never contacts a remote mirror.
 
 ```text
 users/{user_id}/
@@ -217,8 +230,8 @@ users/{user_id}/
 ```
 
 The connected project remains the local source-of-truth workspace. Astra-owned
-artifacts are stored below `.astra/artifacts/{session}/` and mirrored when
-MinIO is configured; arbitrary source files are never uploaded implicitly.
+artifacts are stored below `.astra/artifacts/{session}/` and remain local;
+arbitrary source files are never uploaded implicitly.
 
 Each connected project also receives `.astra/project.json` and a session
 manifest under `.astra/sessions/<session>/manifest.json`. These manifests make
