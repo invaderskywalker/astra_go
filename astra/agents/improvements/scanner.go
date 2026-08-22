@@ -1,6 +1,7 @@
 package improvements
 
 import (
+	"astra/astra/agents/prompts"
 	"astra/astra/services/llm"
 	"astra/astra/utils/jsonutils"
 	"context"
@@ -13,11 +14,7 @@ import (
 // Scan is observation-only: it cannot edit source, create branches, or run arbitrary commands.
 func Scan(ctx context.Context, client llm.LLMClient, model, workspace string) (Proposal, error) {
 	evidence := collectEvidence(ctx, workspace)
-	prompt := fmt.Sprintf(`You are the local Astra improvement scout. Analyze only the supplied evidence. Propose ONE small, measurable improvement to Astra itself. Do not suggest edits outside the repository. Do not claim tests passed unless evidence says so. Return JSON only with title, objective, evidence, proposed_actions, validation, and risk. Every action must be reviewable and require human approval.
-
-Evidence:
-%s`, evidence)
-	response, err := client.Run(ctx, llm.ChatRequest{Model: model, Messages: []llm.Message{{Role: "system", Content: "You are an evidence-first software quality analyst. You never edit code."}, {Role: "user", Content: prompt}}})
+	response, err := client.Run(ctx, llm.ChatRequest{Model: model, Messages: []llm.Message{{Role: "system", Content: prompts.ImprovementScoutSystem()}, {Role: "user", Content: prompts.ImprovementScoutUser(evidence)}}})
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -31,11 +28,7 @@ Evidence:
 
 func ReviewProposal(ctx context.Context, client llm.LLMClient, model string, proposal Proposal) (Review, error) {
 	data, _ := json.MarshalIndent(proposal, "", "  ")
-	prompt := fmt.Sprintf(`You are Astra's master reviewer. Review this proposed self-improvement. Return JSON only with recommendation (approve, reject, or needs_evidence), rationale, and missing_evidence. Reject broad, unsafe, unmeasurable, or unsupported changes. Approval means it is safe to ask the human for permission, not permission to execute.
-
-Proposal:
-%s`, data)
-	response, err := client.Run(ctx, llm.ChatRequest{Model: model, Messages: []llm.Message{{Role: "system", Content: "You are a cautious engineering reviewer. Evidence and testability matter more than novelty."}, {Role: "user", Content: prompt}}})
+	response, err := client.Run(ctx, llm.ChatRequest{Model: model, Messages: []llm.Message{{Role: "system", Content: prompts.ImprovementReviewerSystem()}, {Role: "user", Content: prompts.ImprovementReviewerUser(string(data))}}})
 	if err != nil {
 		return Review{}, err
 	}

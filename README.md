@@ -69,6 +69,11 @@ users/{user_id}/
 The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
 Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.
 
+Agent prompts, behavioral instructions, and output schemas are code-owned in
+`astra/agents/prompts/prompts.go`; Astra does not load agent YAML instruction files.
+For user-facing deliverables it has a validated `write_artifact` action. Artifacts
+are written below `.astra/artifacts/{session}/` in Markdown, JSON, JSONL, CSV, or text.
+
 ## Controlled self-improvement
 
 Improvement proposals are local Markdown files under `.astra/improvements`. The scout can observe and propose; it cannot modify code. Luna can review a proposal; only you can approve or reject it.

@@ -35,8 +35,56 @@ func TestStoreSavesSearchesAndLinksMemory(t *testing.T) {
 	if !strings.Contains(string(data), second.ID) {
 		t.Fatal("related memory link was not rendered")
 	}
+	linkedData, err := os.ReadFile(filepath.Join(store.userRoot(), "memory", "project-note", second.ID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(linkedData), first.ID) {
+		t.Fatal("reciprocal memory link was not rendered")
+	}
 	if _, err := os.Stat(store.indexPath()); err != nil {
 		t.Fatalf("index was not created: %v", err)
+	}
+}
+
+func TestStoreRefinesStableMemoryIdentity(t *testing.T) {
+	store := New(t.TempDir(), 42, "session-1", nil)
+	first, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Backend", Content: "Start with Go.", Importance: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Backend", Content: "Use Go with explicit interfaces.", Importance: 5, Confidence: "confirmed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != updated.ID {
+		t.Fatalf("expected refinement to retain ID: %s != %s", first.ID, updated.ID)
+	}
+	records, err := store.List("decision")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Content != updated.Content || records[0].Importance != 5 {
+		t.Fatalf("unexpected refined record: %#v", records)
+	}
+}
+
+func TestStoreSearchRanksTitleAndImportance(t *testing.T) {
+	store := New(t.TempDir(), 42, "session-1", nil)
+	_, _, err := store.Save(context.Background(), Record{Kind: "note", Title: "General note", Content: "Astra works with Go.", Importance: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preferred, _, err := store.Save(context.Background(), Record{Kind: "decision", Title: "Go architecture", Content: "Use Go for backend.", Importance: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := store.Search("go", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || matches[0].ID != preferred.ID {
+		t.Fatalf("expected ranked result first, got %#v", matches)
 	}
 }
 
