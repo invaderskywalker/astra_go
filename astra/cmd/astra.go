@@ -130,7 +130,7 @@ func main() {
 		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
 		fmt.Println(colorutil.ColorInfo("  - Chat about ideas or get coding help with real-time edits\n"))
 		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit."))
-		fmt.Println(colorutil.ColorInfo("Enter send • Ctrl-J new line • Ctrl-W delete word • Ctrl-U clear draft • Ctrl-C cancel draft\n"))
+		fmt.Println(colorutil.ColorInfo("Enter send • Backspace delete • Ctrl-J new line • Ctrl-W delete word • Ctrl-U clear draft • Ctrl-C cancel draft\n"))
 
 		// --- Interactive input + output multiplexer ---
 		// Input is read independently, so a new request can be submitted while a
@@ -353,7 +353,7 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 	command := strings.TrimPrefix(parts[0], ":")
 	switch command {
 	case "help":
-		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :help, :quit"))
+		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :pause, :resume, :stop, :help, :quit"))
 	case "pwd":
 		fmt.Println(dir)
 	case "model":
@@ -368,6 +368,18 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 			}
 		} else {
 			fmt.Printf(colorutil.ColorInfo("Current model: %s/%s\nUsage: :model <ollama|openai> <model>\n"), provider, model)
+		}
+	case "pause":
+		agent.Pause()
+		fmt.Println(colorutil.ColorWarning("Pause requested. Astra will pause at the next safe checkpoint."))
+	case "resume":
+		agent.Resume()
+		fmt.Println(colorutil.ColorFinalSuccess("Astra resumed."))
+	case "stop", "cancel":
+		if agent.Stop() {
+			fmt.Println(colorutil.ColorWarning("Stop requested. Astra will cancel the active request safely."))
+		} else {
+			fmt.Println(colorutil.ColorInfo("No active request to stop."))
 		}
 	case "ls", "tree":
 		path := dir
@@ -494,40 +506,204 @@ func saveLargePaste(root, content string) string {
 }
 
 func printCLIEvent(message string) {
-	message = strings.ReplaceAll(message, "\n", "\r\n")
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(message), &data); err != nil {
-		fmt.Print(colorutil.ColorWarning(message))
+		printCLIText(colorutil.ColorWarning(message))
 		return
 	}
 	eventType, _ := data["type"].(string)
 	payload, _ := data["payload"].(map[string]interface{})
 	switch eventType {
+	case "plan":
+		printPlan(payload)
+	case "status":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorInfo("• " + text))
+			}
+		}
+	case "needs_input":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorWarning(text))
+			}
+			if questions, ok := payload["questions"].([]interface{}); ok {
+				for _, question := range questions {
+					if text, ok := question.(string); ok {
+						printCLIText(colorutil.ColorWarning("? " + text))
+					}
+				}
+			}
+		}
+	case "action_plan":
+		printActionPlan(payload)
 	case "error":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Print(colorutil.ColorError(text) + "\r\n")
+				printCLIText(colorutil.ColorError(text))
+			}
+		}
+	case "paused":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorWarning("⏸ " + text))
+			}
+		}
+	case "stopped":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorWarning("■ " + text))
 			}
 		}
 	case "completed":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Print(colorutil.ColorFinalSuccess(text) + "\r\n")
+				printCLIText(colorutil.ColorFinalSuccess("✓ " + text))
 			}
 		}
 	case "intermediate":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Print(colorutil.ColorInfo(text) + "\r\n")
+				printCLIText(colorutil.ColorInfo(text))
 			}
 		}
 	case "response_chunk":
 		if payload != nil {
 			if text, ok := payload["chunk"].(string); ok {
-				fmt.Print(colorutil.ColorAgentResponse(text))
+				// Raw terminal mode does not translate LF into a carriage return.
+				// Normalize streamed model text at the output boundary so wrapped
+				// lines always start at column zero.
+				printCLIStream(colorutil.ColorAgentResponse(text))
 			}
 		}
 	}
+}
+
+func normalizeTerminalText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.ReplaceAll(text, "\n", "\r\n")
+}
+
+func printCLIText(text string) {
+	fmt.Print("\r\n" + normalizeTerminalText(text) + "\r\n")
+}
+
+func printCLIStream(text string) {
+	fmt.Print(normalizeTerminalText(text))
+}
+
+func printPlan(plan map[string]interface{}) {
+	if plan == nil {
+		return
+	}
+	fmt.Print(colorutil.ColorPrompt("\r\n┌─ Astra plan\r\n"))
+	if mode := valueString(plan["mode"]); mode != "" {
+		fmt.Print(colorutil.ColorInfo("│ Mode: " + mode + "\r\n"))
+	}
+	if goal := valueString(plan["goal"]); goal != "" {
+		printWrappedCLI("│ Goal: ", goal, "│       ")
+	}
+	if skills := valueStrings(plan["selected_skills"]); len(skills) > 0 {
+		printWrappedCLI("│ Skills: ", strings.Join(skills, ", "), "│         ")
+	}
+	if criteria := valueStrings(plan["success_criteria"]); len(criteria) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Success criteria:\r\n"))
+		for _, item := range criteria {
+			printWrappedCLI("│   ✓ ", item, "│     ")
+		}
+	}
+	if steps := valueStrings(plan["mind_map_steps_in_natural_language"]); len(steps) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Mind map:\r\n"))
+		for i, step := range steps {
+			printWrappedCLI(fmt.Sprintf("│   %d. ", i+1), step, "│      ")
+		}
+	}
+	if verification := valueStrings(plan["verification"]); len(verification) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Verification:\r\n"))
+		for _, item := range verification {
+			printWrappedCLI("│   • ", item, "│     ")
+		}
+	}
+	if risks := valueStrings(plan["risks"]); len(risks) > 0 {
+		fmt.Print(colorutil.ColorWarning("│ Risks / assumptions to watch:\r\n"))
+		for _, item := range risks {
+			printWrappedCLI("│   ! ", item, "│     ")
+		}
+	}
+	if stops := valueStrings(plan["stop_conditions"]); len(stops) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Stop conditions:\r\n"))
+		for _, item := range stops {
+			printWrappedCLI("│   • ", item, "│     ")
+		}
+	}
+	fmt.Print(colorutil.ColorPrompt("└─\r\n"))
+}
+
+func printActionPlan(payload map[string]interface{}) {
+	if payload == nil {
+		return
+	}
+	step, _ := payload["step"].(map[string]interface{})
+	if step == nil {
+		return
+	}
+	index := int(valueNumber(payload["index"]))
+	action := valueString(step["action"])
+	label := fmt.Sprintf("  ├─ Action %d", index)
+	if action != "" {
+		label += ": " + action
+	}
+	fmt.Print(colorutil.ColorInfo(label + "\r\n"))
+	if reason := valueString(step["reason"]); reason != "" {
+		printWrappedCLI("  │  Why: ", reason, "  │       ")
+	}
+	if expected := valueString(step["expected_observation"]); expected != "" {
+		printWrappedCLI("  │  Expect: ", expected, "  │          ")
+	}
+}
+
+func printWrappedCLI(prefix, text, continuation string) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		fmt.Print(colorutil.ColorInfo(prefix + "\r\n"))
+		return
+	}
+	line := prefix
+	const width = 108
+	for _, word := range words {
+		if len([]rune(line))+len([]rune(word))+1 > width && line != prefix {
+			fmt.Print(colorutil.ColorInfo(line + "\r\n"))
+			line = continuation + word
+			continue
+		}
+		if line != prefix {
+			line += " "
+		}
+		line += word
+	}
+	fmt.Print(colorutil.ColorInfo(line + "\r\n"))
+}
+
+func valueString(value interface{}) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func valueStrings(value interface{}) []string {
+	items, _ := value.([]interface{})
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := valueString(item); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func valueNumber(value interface{}) float64 {
+	number, _ := value.(float64)
+	return number
 }
 
 // --- Helper: Get Working Directory ---

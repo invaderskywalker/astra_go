@@ -161,7 +161,6 @@ func (c *OllamaClient) Run(ctx context.Context, req ChatRequest) (string, error)
 // Fixed Streaming Version
 // -----------------------------
 func (c *OllamaClient) RunStream(ctx context.Context, req ChatRequest) (<-chan string, error) {
-	fmt.Println("llm_service_run_stream (ollama)")
 	defer logging.LogDuration(ctx, "llm_service_run_stream")()
 
 	body, err := httputils.PostStream(c.baseURL+"/chat", req)

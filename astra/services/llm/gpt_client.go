@@ -28,18 +28,11 @@ func NewGPTClient() *GPTClient {
 
 	// 2️⃣ Then fallback to global Astra config if API key still missing
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	// fmt.Println("api key ", apiKey)
 	if apiKey == "" {
 		home, _ := os.UserHomeDir()
 		envPath := filepath.Join(home, ".astra", ".astra.env")
 		_ = godotenv.Load(envPath)
 		apiKey = os.Getenv("OPENAI_API_KEY")
-	}
-	// fmt.Println("api key ", apiKey)
-
-	// Log which source worked (optional for debugging)
-	if apiKey != "" {
-		fmt.Println("🔑 OpenAI API key loaded successfully.")
 	}
 
 	return &GPTClient{

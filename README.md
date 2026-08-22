@@ -42,6 +42,8 @@ While connected, the CLI remains interactive while Astra works. Requests are
 queued in order and streamed as they complete. Use these local controls:
 
 In a real terminal, the input bar supports editing. Press `Enter` to submit,
+`Backspace` to delete a character, `←`/`→` to move the cursor, `↑`/`↓` to
+navigate commands from this session, `Home`/`End` to jump within a draft,
 `Ctrl-J` to add a new line, `Ctrl-W` to delete the previous word, `Ctrl-U` to
 clear the draft, and `Ctrl-C` to cancel the draft.
 
@@ -53,6 +55,9 @@ clear the draft, and `Ctrl-C` to cancel the draft.
 :model                        Show the active provider/model
 :model ollama qwen3:14b       Switch models when idle
 :model openai gpt-5.6-luna    Switch to Luna for future requests
+:pause                       Pause at the next safe agent checkpoint
+:resume                      Resume a paused agent
+:stop                        Cancel the active request safely
 :attach /path/to/file         Safely attach an outside file
 :paste                        Start a multiline paste; finish with :endpaste
 ```

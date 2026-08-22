@@ -6,7 +6,6 @@ import (
 	"astra/astra/agents/prompts"
 	"astra/astra/services/llm"
 	"astra/astra/sources/psql/dao"
-	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/jsonutils"
 	"astra/astra/utils/logging"
 	"context"
@@ -45,6 +44,11 @@ type BaseAgent struct {
 	responseCh     chan string
 	queryQueue     chan queuedQuery
 	mu             sync.Mutex
+	controlMu      sync.Mutex
+	controlCond    *sync.Cond
+	paused         bool
+	running        bool
+	cancelCurrent  context.CancelFunc
 	chatDAO        *dao.ChatMessageDAO
 	summaryDAO     *dao.SessionSummaryDAO
 	DB             *gorm.DB
@@ -80,6 +84,7 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *g
 		summaryDAO:  summaryDAO,
 		DB:          db,
 	}
+	agent.controlCond = sync.NewCond(&agent.controlMu)
 	logging.AppLogger.Info("BaseAgent initialized",
 		zap.Int("user_id", userID),
 		zap.String("agent_name", agentName), zap.String("provider", provider), zap.String("model", model),
@@ -87,6 +92,74 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, db *g
 	go agent.handleEvents()
 	go agent.processQueue()
 	return agent
+}
+
+// Pause requests cooperative suspension at the next safe checkpoint. An
+// in-flight HTTP/tool call is allowed to finish without being interrupted in
+// the middle of a write.
+func (a *BaseAgent) Pause() {
+	a.controlMu.Lock()
+	a.paused = true
+	a.controlMu.Unlock()
+}
+
+func (a *BaseAgent) Resume() {
+	a.controlMu.Lock()
+	a.paused = false
+	a.controlCond.Broadcast()
+	a.controlMu.Unlock()
+}
+
+// Stop cancels the current request's context. Providers and context-aware
+// calls can return immediately; non-context-aware actions finish their current
+// atomic operation and stop before the next checkpoint.
+func (a *BaseAgent) Stop() bool {
+	a.controlMu.Lock()
+	cancel := a.cancelCurrent
+	a.controlMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	a.controlMu.Lock()
+	a.controlCond.Broadcast()
+	a.controlMu.Unlock()
+	return true
+}
+
+func (a *BaseAgent) beginRun() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.controlMu.Lock()
+	a.running = true
+	a.cancelCurrent = cancel
+	a.controlMu.Unlock()
+	return ctx, cancel
+}
+
+func (a *BaseAgent) endRun() {
+	a.controlMu.Lock()
+	a.running = false
+	a.cancelCurrent = nil
+	a.controlCond.Broadcast()
+	a.controlMu.Unlock()
+}
+
+func (a *BaseAgent) checkpoint(ctx context.Context, ch chan<- string) bool {
+	a.controlMu.Lock()
+	announced := false
+	for a.paused && ctx.Err() == nil {
+		if !announced {
+			select {
+			case ch <- a.formatEvent("paused", map[string]interface{}{"message": "Astra is paused. Use :resume to continue."}):
+			default:
+			}
+			announced = true
+		}
+		a.controlCond.Wait()
+	}
+	stopped := ctx.Err() != nil
+	a.controlMu.Unlock()
+	return !stopped
 }
 
 // SetModel switches the model for future queued requests. Callers should only
@@ -117,9 +190,8 @@ func (a *BaseAgent) handleEvents() {
 	for {
 		select {
 		case step := <-a.stepCh:
-			if msg, ok := step["message"].(string); ok {
-				fmt.Print(colorutil.ColorInfo("[Astra Step] "+msg) + "\r\n")
-			}
+			// Step events are internal telemetry. The request owner renders
+			// user-facing progress so it cannot interleave with the prompt.
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
 		case <-a.responseCh:
 			// Response chunks are rendered by the caller that owns the stream.
@@ -190,7 +262,7 @@ func (a *BaseAgent) GetRecentSessionSummaries(n int) ([]string, error) {
 }
 
 // --- PLANNING/PROMPT GENERATION ---
-func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) {
+func (a *BaseAgent) createRoughPlan(ctx context.Context, query string) (plan map[string]interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logging.ErrorLogger.Error("Planning failure", zap.Any("recover", r))
@@ -230,8 +302,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 		Stream: false,
 	}
 
-	resp, err := a.LLM.Run(context.Background(), req)
-	// fmt.Println("\nreateRoughPlan plan created --- ", resp)
+	resp, err := a.LLM.Run(ctx, req)
 	if err != nil {
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
@@ -249,7 +320,7 @@ func (a *BaseAgent) createRoughPlan(query string) (plan map[string]interface{}) 
 }
 
 // generateNextExecutionPlan and other methods remain unchanged
-func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
+func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logging.ErrorLogger.Error("generateNextExecutionPlan failure", zap.Any("recover", r))
@@ -280,15 +351,12 @@ func (a *BaseAgent) generateNextExecutionPlan(roughPlan map[string]interface{}, 
 		Stream: false,
 	}
 
-	resp, err := a.LLM.Run(context.Background(), req)
+	resp, err := a.LLM.Run(ctx, req)
 	if err != nil {
 		panic(fmt.Errorf("failed to create plan: %w", err))
 	}
 
-	// fmt.Println("\n exec plan created --- ", resp)
-
 	respJSON := jsonutils.ExtractJSON(resp)
-	fmt.Println("\n exec plan created extracted json --- ", respJSON)
 	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
 		panic(fmt.Errorf("invalid plan format: %w", err))
 	}
@@ -310,10 +378,24 @@ func (a *BaseAgent) ProcessQuery(query string) <-chan string {
 }
 
 func (a *BaseAgent) runQuery(query string, ch chan string) {
+	ctx, cancel := a.beginRun()
+	defer cancel()
+	defer a.endRun()
+	if !a.checkpoint(ctx, ch) {
+		a.stopped(ch)
+		return
+	}
+	// Execution plans are per request. Keeping prior plans here makes later
+	// requests look as if they already performed actions they never performed.
+	a.ExecutionPlans = nil
 	a.storeState("user_query", query)
 	// Step 1: Create the rough plan
-	a.stepCh <- map[string]interface{}{"message": "Creating rough plan"}
-	roughPlan := a.createRoughPlan(query)
+	a.status(ch, "Understanding your request")
+	roughPlan := a.createRoughPlan(ctx, query)
+	if ctx.Err() != nil {
+		a.stopped(ch)
+		return
+	}
 	if roughPlan["error"] != nil {
 		ch <- a.formatEvent("error", map[string]interface{}{
 			"message": fmt.Sprint(roughPlan["error"]),
@@ -321,18 +403,27 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		return
 	}
 	a.RoughPlan = roughPlan
-	ch <- a.formatEvent("intermediate", map[string]interface{}{
-		"message": "Plan created successfully",
-	})
-	ch <- a.formatEvent("intermediate", map[string]interface{}{
-		"message": jsonutils.ToJSON(roughPlan),
-	})
+	ch <- a.formatEvent("plan", roughPlan)
+	if mode, _ := roughPlan["mode"].(string); mode == "conversation" {
+		a.status(ch, "Preparing answer")
+		a.streamResponse(ctx, query, map[string]interface{}{"steps": []map[string]interface{}{}}, ch)
+		return
+	}
+	a.status(ch, "Plan ready")
 	results := []map[string]interface{}{}
 	stepIndex := 1
 	const maxExecutionSteps = 12
 	for stepIndex <= maxExecutionSteps {
-		a.stepCh <- map[string]interface{}{"message": "Planning step", "step_index": stepIndex}
-		expanded := a.generateNextExecutionPlan(a.RoughPlan, stepIndex, results)
+		if !a.checkpoint(ctx, ch) {
+			a.stopped(ch)
+			return
+		}
+		a.status(ch, fmt.Sprintf("Planning next action (%d)", stepIndex))
+		expanded := a.generateNextExecutionPlan(ctx, a.RoughPlan, stepIndex, results)
+		if ctx.Err() != nil {
+			a.stopped(ch)
+			return
+		}
 		if expanded == nil {
 			ch <- a.formatEvent("error", map[string]interface{}{
 				"message": "generateNextExecutionPlan returned nil",
@@ -352,11 +443,6 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		if !shouldContinue {
 			break
 		}
-		ch <- a.formatEvent("intermediate", map[string]interface{}{
-			"phase":    "expanded_step",
-			"index":    stepIndex,
-			"expanded": expanded,
-		})
 		var planToExec map[string]interface{} = expanded
 		step, ok := expanded["next_step"].(map[string]interface{})
 		if !ok {
@@ -364,15 +450,19 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			return
 		}
 		actionName, _ := step["action"].(string)
-		fmt.Println("action name .. ", actionName)
 		if actionName == "" {
-			fmt.Println("breaking no action name")
-			break
+			ch <- a.formatEvent("error", map[string]interface{}{"message": "The planner returned no action."})
+			return
 		}
-		ch <- a.formatEvent("intermediate", map[string]interface{}{
-			"phase": "executing_step", "index": stepIndex,
+		if !a.checkpoint(ctx, ch) {
+			a.stopped(ch)
+			return
+		}
+		ch <- a.formatEvent("action_plan", map[string]interface{}{
+			"index": stepIndex,
+			"step":  step,
 		})
-		a.stepCh <- map[string]interface{}{"message": "Executing expanded step", "step_index": stepIndex}
+		a.status(ch, fmt.Sprintf("Running %s", actionName))
 		if actionName == "think_aloud_reasoning" {
 			var params map[string]interface{}
 			if p, ok := step["action_params"].(map[string]interface{}); ok {
@@ -387,7 +477,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			contextInfo, _ := params["context"].(string)
 			goal, _ := params["goal"].(string)
 			goal += " Ensure the upcoming action is safe, meaningful, and consistent. Identify what will change and why."
-			finalThought := a.thinkAloud(map[string]interface{}{"steps": results}, contextInfo, goal)
+			finalThought := a.thinkAloud(ctx, map[string]interface{}{"steps": results}, contextInfo, goal)
 			results = append(results, map[string]interface{}{
 				"step_index":    stepIndex,
 				"executed_plan": planToExec,
@@ -404,12 +494,9 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 				_ = json.Unmarshal(bytes, &params)
 			}
 
-			a.stepCh <- map[string]interface{}{
-				"message": "Reading image(s) with vision",
-				"count":   len(params.ImagePaths),
-			}
+			a.status(ch, "Reading image(s)")
 
-			visionResults := a.readImageWithVision(params)
+			visionResults := a.readImageWithVision(ctx, params)
 
 			results = append(results, map[string]interface{}{
 				"step_index":    stepIndex,
@@ -421,14 +508,24 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 
 			continue
 		}
-		// fmt.Println("executing plan ... ")
+		// A clarification is a terminal state for this request. Do not feed it
+		// back into the planner: that creates an ask-again forever loop.
+		if actionName == "ask_follow_up_questions" {
+			execRes := a.executePlan(planToExec)
+			questions := followUpQuestions(execRes)
+			a.storeState("pending_questions", questions)
+			results = append(results, map[string]interface{}{
+				"step_index":    stepIndex,
+				"executed_plan": planToExec,
+				"result":        execRes,
+			})
+			ch <- a.formatEvent("needs_input", map[string]interface{}{
+				"message":   "I need one clarification before I continue.",
+				"questions": questions,
+			})
+			return
+		}
 		execRes := a.executePlan(planToExec)
-		// fmt.Println("executed plan ... ")
-		ch <- a.formatEvent("intermediate", map[string]interface{}{
-			"phase":   "executed_step",
-			"index":   stepIndex,
-			"execRes": execRes,
-		})
 		results = append(results, map[string]interface{}{
 			"step_index":    stepIndex,
 			"executed_plan": planToExec,
@@ -444,12 +541,15 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		"execution_plans": a.ExecutionPlans,
 	}
 	a.storeState("full_plan", fullPlan)
-	// generate  LLM response
-	a.stepCh <- map[string]interface{}{"message": "Preparing summary"}
-	respReq := a.buildResponseReq(map[string]interface{}{"steps": results}, query)
-	respCh, err := a.LLM.RunStream(context.Background(), respReq)
+	// Generate the user-facing response only after execution evidence is ready.
+	a.status(ch, "Preparing answer")
+	a.streamResponse(ctx, query, map[string]interface{}{"steps": results}, ch)
+}
+
+func (a *BaseAgent) streamResponse(ctx context.Context, query string, results map[string]interface{}, ch chan<- string) {
+	respReq := a.buildResponseReq(results, query)
+	respCh, err := a.LLM.RunStream(ctx, respReq)
 	if err != nil {
-		a.stepCh <- map[string]interface{}{"message": "LLM stream start failed", "error": err.Error()}
 		ch <- a.formatEvent("error", map[string]interface{}{
 			"message": "failed to stream response", "error": err.Error(),
 		})
@@ -459,6 +559,10 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	var utf8Buf string
 
 	for chunk := range respCh {
+		if !a.checkpoint(ctx, ch) {
+			a.stopped(ch)
+			return
+		}
 		resp += chunk
 		utf8Buf += chunk
 
@@ -484,19 +588,9 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		}
 	}
 	a.storeState("response", resp)
-	// --- SESSION SUMMARY PERSISTENCE ---
-	// a.stepCh <- map[string]interface{}{"message": "Generating and persisting session summary"}
-	// summaryText := a.GenerateSessionSummary(query, roughPlan, a.ExecutionPlans, results)
-	// ctx := context.Background()
-	// _, err = a.summaryDAO.UpsertSessionSummary(ctx, a.SessionID, a.UserID, summaryText)
-	// if err != nil {
-	// 	ch <- a.formatEvent("error", map[string]interface{}{
-	// 		"message": fmt.Sprintf("Failed to upsert session summary: %v", err),
-	// 	})
-	// }
 	ch <- a.formatEvent("completed", map[string]interface{}{
 		"message": "Process completed successfully",
-		"steps":   len(results),
+		"steps":   len(a.ExecutionPlans),
 	})
 }
 
@@ -529,10 +623,7 @@ func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string
 		}
 		return
 	}
-	a.stepCh <- map[string]interface{}{"message": "Executing step", "step_id": stepID, "action": actionName}
-	fmt.Println("executePlan ", actionName, params)
 	out, err := a.dataActions.ExecuteAction(actionName, params)
-	fmt.Println("a.dataActions.ExecuteAction(actionName, params)", out, err)
 	if err != nil {
 		results["action_results"].(map[string]interface{})[stepID] = map[string]interface{}{
 			"status": "error",
@@ -600,7 +691,7 @@ func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
 	return string(b)
 }
 
-func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal string) string {
+func (a *BaseAgent) thinkAloud(ctx context.Context, results map[string]interface{}, contextInfo, goal string) string {
 	a.stepCh <- map[string]interface{}{
 		"message": "Starting internal thought process",
 		"context": contextInfo,
@@ -618,7 +709,7 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 		},
 		Stream: true,
 	}
-	respCh, err := a.LLM.RunStream(context.Background(), req)
+	respCh, err := a.LLM.RunStream(ctx, req)
 	if err != nil {
 		a.stepCh <- map[string]interface{}{"message": "thinking stream failed", "error": err.Error()}
 		return "thinking failed"
@@ -636,6 +727,7 @@ func (a *BaseAgent) thinkAloud(results map[string]interface{}, contextInfo, goal
 }
 
 func (a *BaseAgent) readImageWithVision(
+	ctx context.Context,
 	params actions.ReadImageWithVisionParams,
 ) []actions.VisionImageResult {
 
@@ -655,8 +747,6 @@ func (a *BaseAgent) readImageWithVision(
 		}
 
 		imageB64 := base64.StdEncoding.EncodeToString(data)
-
-		fmt.Println("Image bytes:", len(data))
 
 		systemPrompt := prompts.VisionSystem()
 
@@ -704,17 +794,50 @@ func (a *BaseAgent) readImageWithVision(
 			Stream: false,
 		}
 
-		resp, err := a.LLM.Run(context.Background(), req)
+		resp, err := a.LLM.Run(ctx, req)
 		if err != nil {
 			res.Error = err.Error()
 		} else {
 			res.VisionDescription = resp
 		}
 
-		fmt.Println("resp vison read .. ", resp)
-
 		results = append(results, res)
 	}
 
 	return results
+}
+
+// status emits concise progress to the request stream. Internal planner
+// telemetry remains in logs and never corrupts the user's input line.
+func (a *BaseAgent) status(ch chan<- string, message string) {
+	ch <- a.formatEvent("status", map[string]interface{}{"message": message})
+}
+
+func (a *BaseAgent) stopped(ch chan<- string) {
+	ch <- a.formatEvent("stopped", map[string]interface{}{"message": "Request stopped."})
+}
+
+func followUpQuestions(result map[string]interface{}) []string {
+	actionResults, ok := result["action_results"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	for _, raw := range actionResults {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		out, ok := entry["output"].(*actions.ActionResult)
+		if !ok || out == nil {
+			continue
+		}
+		if details, ok := out.Diagnostics.(actions.AskFollowUpQuestionsResult); ok {
+			questions := make([]string, 0, len(details.FollowUps))
+			for _, item := range details.FollowUps {
+				questions = append(questions, item.Question)
+			}
+			return questions
+		}
+	}
+	return nil
 }
