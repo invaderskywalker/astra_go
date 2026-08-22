@@ -118,7 +118,7 @@ func (a *BaseAgent) handleEvents() {
 		select {
 		case step := <-a.stepCh:
 			if msg, ok := step["message"].(string); ok {
-				fmt.Println(colorutil.ColorInfo("[Astra Step] " + msg))
+				fmt.Print(colorutil.ColorInfo("[Astra Step] "+msg) + "\r\n")
 			}
 			logging.AppLogger.Info("Step update", zap.Any("step", step))
 		case <-a.responseCh:

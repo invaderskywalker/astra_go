@@ -10,6 +10,13 @@ Astra is a Go-based engineering agent with a React frontend. It can operate with
 
 ## CLI model selection
 
+Check the installed CLI version:
+
+```sh
+astra --version
+# Astra CLI v0.2.0
+```
+
 Show locally installed Ollama models plus the supported OpenAI options:
 
 ```sh
@@ -33,6 +40,10 @@ Other supported cloud choices are `gpt-5.6-terra` (balanced) and `gpt-5.6-sol` (
 
 While connected, the CLI remains interactive while Astra works. Requests are
 queued in order and streamed as they complete. Use these local controls:
+
+In a real terminal, the input bar supports editing. Press `Enter` to submit,
+`Ctrl-J` to add a new line, `Ctrl-W` to delete the previous word, `Ctrl-U` to
+clear the draft, and `Ctrl-C` to cancel the draft.
 
 ```text
 :help                         Show controls

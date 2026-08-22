@@ -11,7 +11,6 @@ import (
 	"astra/astra/sources/psql/dao"
 	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -36,6 +35,14 @@ func main() {
 	defer cancel()
 
 	args := os.Args[1:]
+	if len(args) >= 1 && args[0] == "--verison" {
+		fmt.Println("Unknown option '--verison'. Did you mean '--version'?")
+		return
+	}
+	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
+		fmt.Printf("Astra CLI v%s\n", config.CLIVersion)
+		return
+	}
 	if len(args) >= 1 && args[0] == "improve" {
 		runImprove(args[1:])
 		return
@@ -122,20 +129,13 @@ func main() {
 		fmt.Println(colorutil.ColorInfo("  - Ask for project bootstrapping (e.g., 'Create a new Vite + TS + Three.js frontend here')"))
 		fmt.Println(colorutil.ColorInfo("  - Request backend setup, schema generation, or debugging help"))
 		fmt.Println(colorutil.ColorInfo("  - Chat about ideas or get coding help with real-time edits\n"))
-		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit.\n"))
+		fmt.Println(colorutil.ColorPrompt("Type your command or 'exit' to quit."))
+		fmt.Println(colorutil.ColorInfo("Enter send • Ctrl-J new line • Ctrl-W delete word • Ctrl-U clear draft • Ctrl-C cancel draft\n"))
 
 		// --- Interactive input + output multiplexer ---
 		// Input is read independently, so a new request can be submitted while a
 		// previous one is planning, editing, testing, or streaming its response.
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-		inputCh := make(chan string)
-		go func() {
-			for scanner.Scan() {
-				inputCh <- scanner.Text()
-			}
-			close(inputCh)
-		}()
+		inputCh := interactiveInput(colorutil.ColorPrompt("astra> "))
 		type outputEvent struct {
 			id      int
 			message string
@@ -159,9 +159,8 @@ func main() {
 				}
 				eventCh <- outputEvent{id: id, done: true}
 			}(id, outputCh)
-			fmt.Printf(colorutil.ColorInfo("Queued request #%d (you can continue typing).\n"), id)
+			fmt.Print(fmt.Sprintf(colorutil.ColorInfo("Queued request #%d (you can continue typing).\r\n"), id))
 		}
-		fmt.Print(colorutil.ColorPrompt("astra> "))
 		for inputCh != nil || active > 0 {
 			cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(inputCh)}}
 			if inputCh == nil {
@@ -180,14 +179,12 @@ func main() {
 						pasteMode = false
 						queueQuery(strings.Join(pasteLines, "\n"))
 						pasteLines = nil
-						fmt.Print(colorutil.ColorPrompt("astra> "))
 					} else {
 						pasteLines = append(pasteLines, value.String())
 					}
 					continue
 				}
 				if line == "" {
-					fmt.Print(colorutil.ColorPrompt("astra> "))
 					continue
 				}
 				if line == "exit" || line == "quit" {
@@ -204,11 +201,9 @@ func main() {
 				handled, nextProvider, nextModel := handleCLICommand(line, dirPath, *provider, *model, agent, active)
 				if handled {
 					*provider, *model = nextProvider, nextModel
-					fmt.Print(colorutil.ColorPrompt("astra> "))
 					continue
 				}
 				queueQuery(line)
-				fmt.Print(colorutil.ColorPrompt("astra> "))
 				continue
 			}
 			if chosen == len(cases)-1 {
@@ -217,17 +212,19 @@ func main() {
 					active--
 					if active == 0 {
 						fmt.Println()
-						fmt.Print(colorutil.ColorPrompt("astra> "))
 					}
 					continue
 				}
 				printCLIEvent(event.message)
 			}
 		}
+		restoreInteractiveTerminal()
 		os.Exit(0)
 
 	} else {
 		fmt.Println(colorutil.ColorPrompt("Astra CLI usage:"))
+		fmt.Println(colorutil.ColorInfo("  astra --version"))
+		fmt.Println(colorutil.ColorInfo("  astra version"))
 		fmt.Println(colorutil.ColorInfo("  astra connect [--provider ollama|openai] [--model MODEL]"))
 		fmt.Println(colorutil.ColorInfo("  astra models    # Show local Ollama and supported cloud model choices"))
 		fmt.Println(colorutil.ColorInfo("  astra improve scan|list|review|approve|reject  # Improvement proposal queue"))
@@ -497,6 +494,7 @@ func saveLargePaste(root, content string) string {
 }
 
 func printCLIEvent(message string) {
+	message = strings.ReplaceAll(message, "\n", "\r\n")
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(message), &data); err != nil {
 		fmt.Print(colorutil.ColorWarning(message))
@@ -508,19 +506,19 @@ func printCLIEvent(message string) {
 	case "error":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Println(colorutil.ColorError(text))
+				fmt.Print(colorutil.ColorError(text) + "\r\n")
 			}
 		}
 	case "completed":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Println(colorutil.ColorFinalSuccess(text))
+				fmt.Print(colorutil.ColorFinalSuccess(text) + "\r\n")
 			}
 		}
 	case "intermediate":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
-				fmt.Println(colorutil.ColorInfo(text))
+				fmt.Print(colorutil.ColorInfo(text) + "\r\n")
 			}
 		}
 	case "response_chunk":

@@ -38,7 +38,6 @@ func NewMinIOClient(cfg config.Config) (*MinIOClient, error) {
 		},
 	)
 
-	fmt.Println("NewMinIOClient ", err)
 	if err != nil {
 		return nil, err
 	}

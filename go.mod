@@ -15,6 +15,7 @@ require (
 	github.com/playwright-community/playwright-go v0.5200.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.43.0
+	golang.org/x/term v0.35.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/driver/sqlite v1.6.0
