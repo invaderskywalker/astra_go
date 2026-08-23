@@ -30,10 +30,10 @@ and available actions—is injected into the prompts instead of being guessed.
 | Code delivery | Applies precise edits, then can build/test | Changed files plus validator output | `astra/agents/actions/edits.go`, `engineering.go` |
 | Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output; expected non-zero checks can be marked | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
 | Web research | Searches current external information and scrapes supplied URLs when needed | Source URLs and extracted content | `astra/agents/actions/scraping_action.go` |
-| File artifacts | Writes validated Markdown, JSON, JSONL, CSV, or text to the session artifact area | Exact artifact path and format | `astra/agents/actions/artifacts.go` |
+| File artifacts | Writes validated Markdown, JSON, JSONL, CSV, or text to the private external project/session artifact area | Exact artifact path and format | `astra/agents/actions/artifacts.go` |
 | Mind Palace | Stores curated linked Markdown memory and append-only session evidence | Memory file, provenance, links | `astra/agents/actions/learning_knowledge.go`, `sources/mindpalace` |
 | Local identity | Single private profile with explicit signup/login/logout; no directory-derived users | Owner-only profile and login marker under `~/.astra/identity` | `astra/sources/identity`, `astra/cmd/auth.go` |
-| Local storage | Session history, manifests, artifacts, attachments, and Mind Palace are file-backed; external sync is disabled by default | Portable files with local status records | `astra/sources/state`, `astra/sources/mindpalace` |
+| Local storage | Session history, manifests, artifacts, attachments, and Mind Palace are file-backed outside connected repositories; external sync is disabled by default | Portable files with local status records | `astra/sources/state`, `astra/sources/mindpalace` |
 | Interactive CLI | Full-screen cockpit with an isolated multiline composer, scrollable transcript, queued requests, model switching, pause/resume/stop/clear, and keyboard navigation; `--plain` remains available for pipes | Terminal events, status, and view state | `astra/cmd/tui.go`, `astra/cmd/input.go` |
 | CLI workspace views | Dashboard, project files, user Mind Palace, session manifests/evidence, and managed sync configuration are navigable from one shell | Read-only panels, metrics, Unicode bars, and bounded file listings | `astra/cmd/tui.go`, `astra/cmd/views.go`, `astra/sources/state` |
 | Self-improvement | Qwen can scan for one bounded proposal; Luna can review; human approves | Reviewable proposal file | `astra/agents/improvements` |
@@ -42,7 +42,9 @@ and available actions—is injected into the prompts instead of being guessed.
 
 ## Scope and authority
 
-The connected workspace is the default local project boundary. It is not a
+The connected workspace is the source-code boundary. Astra-owned project and
+session files default to `~/.astra/projects/` and can be relocated with
+`ASTRA_DATA_DIR`. It is not a
 claim that Astra can only converse about that directory. Astra can also answer
 general questions, use current web research, create user-facing artifacts,
 retrieve linked memory, and run explicit local commands. Every action still has

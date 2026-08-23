@@ -117,9 +117,10 @@ JSONL file. Commands can target nested project directories with
 `working_directory`; use `run_commands` when several related commands should
 run in order.
 
-Explicitly attached files are copied into `.astra/attachments/`. Very large
-single-line pastes are automatically saved there as text attachments and passed
-to Astra by reference, keeping the model context usable and traceable.
+Explicitly attached files and very large single-line pastes are copied into the
+private Astra data directory for the current project/session, outside the
+repository, and passed to Astra by reference. This keeps source trees clean
+while preserving traceability.
 
 Set persistent CLI defaults with:
 
@@ -230,13 +231,12 @@ users/{user_id}/
 ```
 
 The connected project remains the local source-of-truth workspace. Astra-owned
-artifacts are stored below `.astra/artifacts/{session}/` and remain local;
-arbitrary source files are never uploaded implicitly.
-
-Each connected project also receives `.astra/project.json` and a session
-manifest under `.astra/sessions/<session>/manifest.json`. These manifests make
-the active project, session files, artifacts, and durable user memory visible
-to the CLI views without loading every file into model context.
+session state is stored outside it under
+`$ASTRA_DATA_DIR/projects/{project_id}/` (default: `~/.astra/projects/`). This
+keeps repositories free of Astra metadata while the CLI still shows the
+project, session, artifacts, and attachments through its views. Set
+`ASTRA_DATA_DIR` to relocate all Astra-owned state. Arbitrary source files are
+never uploaded implicitly.
 
 The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
 Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.
@@ -244,11 +244,14 @@ Use Markdown for learnings and decisions, JSONL for append-only events, JSON for
 Agent prompts, behavioral instructions, and output schemas are code-owned in
 `astra/agents/prompts/prompts.go`; Astra does not load agent YAML instruction files.
 For user-facing deliverables it has a validated `write_artifact` action. Artifacts
-are written below `.astra/artifacts/{session}/` in Markdown, JSON, JSONL, CSV, or text.
+are written below the external project data directory in Markdown, JSON, JSONL,
+CSV, or text.
 
 ## Controlled self-improvement
 
-Improvement proposals are local Markdown files under `.astra/improvements`. The scout can observe and propose; it cannot modify code. Luna can review a proposal; only you can approve or reject it.
+Improvement proposals are private Markdown files under the external project data
+directory. The scout can observe and propose; it cannot modify code. Luna can
+review a proposal; only you can approve or reject it.
 
 ```sh
 # Qwen observes the workspace and creates one review-ready proposal.

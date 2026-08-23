@@ -2,6 +2,7 @@ package main
 
 import (
 	"astra/astra/agents/core"
+	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
 	"fmt"
 	"os"
@@ -15,8 +16,8 @@ import (
 // persisted by the runtime.
 func printDashboard(root, memoryRoot, provider, model string, agent *core.BaseAgent, active int) {
 	workspaceFiles, workspaceDirs := countFiles(root)
-	artifactFiles, _ := countFiles(filepath.Join(root, ".astra", "artifacts"))
-	attachmentFiles, _ := countFiles(filepath.Join(root, ".astra", "attachments"))
+	artifactFiles, _ := countFiles(state.SessionArtifactsRoot(root, agent.SessionID))
+	attachmentFiles, _ := countFiles(state.SessionAttachmentsRoot(root, agent.SessionID))
 	memoryFiles, memoryDirs := countFiles(filepath.Join(memoryRoot, "users", fmt.Sprintf("%d", agent.UserID), "memory"))
 	sessionEvents := filepath.Join(memoryRoot, "users", fmt.Sprintf("%d", agent.UserID), "sessions", safeViewName(agent.SessionID), "events.jsonl")
 
@@ -62,8 +63,8 @@ func printMindPalaceView(memoryRoot string, userID int) {
 }
 
 func printSessionsView(root, memoryRoot string, userID int) {
-	printViewHeader("Project sessions", filepath.Join(root, ".astra", "sessions"))
-	projectSessions := filepath.Join(root, ".astra", "sessions")
+	printViewHeader("Project sessions", state.ProjectDataRoot(root))
+	projectSessions := filepath.Join(state.ProjectDataRoot(root), "sessions")
 	if entries, err := os.ReadDir(projectSessions); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -99,7 +100,7 @@ func printSyncView(root, memoryRoot string) {
 	printKV("Mind Palace root", memoryRoot)
 	printKV("Mode", "local files only")
 	printKV("Managed scope", "Mind Palace, session evidence, and artifacts")
-	syncFiles, _ := countFiles(filepath.Join(root, ".astra", "sync"))
+	syncFiles, _ := countFiles(filepath.Join(state.ProjectDataRoot(root), "sessions"))
 	printKV("Sync records", fmt.Sprintf("%d local records", syncFiles))
 	printKV("Source repository", "local; never exported implicitly")
 	printCLIText(colorutil.ColorInfo("External sync is disabled. Files are already durable on this machine."))
@@ -135,7 +136,7 @@ func countFiles(root string) (files, dirs int) {
 		return 0, 0
 	}
 	for _, entry := range entries {
-		if entry.Name() == ".git" || entry.Name() == "node_modules" {
+		if entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == ".astra" {
 			continue
 		}
 		if entry.IsDir() {

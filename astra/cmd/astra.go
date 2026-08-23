@@ -12,6 +12,7 @@ import (
 	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -164,7 +165,7 @@ func main() {
 		pasteLines := []string{}
 		queueQuery := func(line string) {
 			if len(line) > 12000 {
-				line = saveLargePaste(dirPath, line)
+				line = saveLargePaste(dirPath, sessionID, line)
 			}
 			id, outputCh := nextID, agent.ProcessQuery(line)
 			nextID++
@@ -310,7 +311,7 @@ func runImprove(args []string) {
 	switch args[0] {
 	case "scan":
 		flags := flag.NewFlagSet("improve scan", flag.ExitOnError)
-		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		root := flags.String("root", defaultImprovementRoot(), "proposal queue directory")
 		provider := flags.String("provider", "ollama", "LLM provider")
 		model := flags.String("model", "qwen3:14b", "scout model")
 		_ = flags.Parse(args[1:])
@@ -328,7 +329,7 @@ func runImprove(args []string) {
 		fmt.Println(proposal.Title)
 	case "list":
 		flags := flag.NewFlagSet("improve list", flag.ExitOnError)
-		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		root := flags.String("root", defaultImprovementRoot(), "proposal queue directory")
 		_ = flags.Parse(args[1:])
 		proposals, err := improvements.New(*root).List()
 		if err != nil {
@@ -344,7 +345,7 @@ func runImprove(args []string) {
 		}
 	case "review":
 		flags := flag.NewFlagSet("improve review", flag.ExitOnError)
-		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		root := flags.String("root", defaultImprovementRoot(), "proposal queue directory")
 		provider := flags.String("provider", "openai", "LLM provider")
 		model := flags.String("model", "gpt-5.6-luna", "review model")
 		_ = flags.Parse(args[1:])
@@ -370,7 +371,7 @@ func runImprove(args []string) {
 		fmt.Printf("%s: %s\n%s\n", review.Recommendation, proposal.Title, review.Rationale)
 	case "approve", "reject":
 		flags := flag.NewFlagSet("improve "+args[0], flag.ExitOnError)
-		root := flags.String("root", ".astra/improvements", "proposal queue directory")
+		root := flags.String("root", defaultImprovementRoot(), "proposal queue directory")
 		reason := flags.String("reason", "", "human decision reason")
 		_ = flags.Parse(args[1:])
 		if flags.NArg() != 1 {
@@ -393,6 +394,10 @@ func runImprove(args []string) {
 	default:
 		fmt.Println("Usage: astra improve scan|list|review|approve|reject")
 	}
+}
+
+func defaultImprovementRoot() string {
+	return filepath.Join(config.ProjectDataRoot(getWorkingDir()), "improvements")
 }
 
 func printModels(ctx context.Context) {
@@ -492,7 +497,7 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 			fmt.Println(colorutil.ColorWarning("Usage: :attach <file-path>"))
 			break
 		}
-		if target, err := attachCLIFile(dir, parts[1]); err != nil {
+		if target, err := attachCLIFile(dir, agent.SessionID, parts[1]); err != nil {
 			fmt.Println(colorutil.ColorError(err.Error()))
 		} else {
 			fmt.Println(colorutil.ColorFinalSuccess("Attached: " + target))
@@ -528,7 +533,7 @@ func listCLIFiles(path, root string, recursive bool, depth int) error {
 		return err
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".git") || entry.Name() == "node_modules" {
+		if strings.HasPrefix(entry.Name(), ".git") || entry.Name() == "node_modules" || entry.Name() == ".astra" {
 			continue
 		}
 		rel, _ := filepath.Rel(root, filepath.Join(path, entry.Name()))
@@ -552,7 +557,7 @@ func listCLIFiles(path, root string, recursive bool, depth int) error {
 	return nil
 }
 
-func attachCLIFile(root, requested string) (string, error) {
+func attachCLIFile(root, sessionID, requested string) (string, error) {
 	path := requested
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
@@ -576,26 +581,32 @@ func attachCLIFile(root, requested string) (string, error) {
 		return "", err
 	}
 	name := filepath.Base(path)
-	destination := filepath.Join(root, ".astra", "attachments", uuid.New().String()+"-"+name)
-	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+	destination := filepath.Join(config.ProjectDataRoot(root), "sessions", safePathPart(sessionID), "attachments", uuid.New().String()+"-"+name)
+	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(destination, data, 0644); err != nil {
+	if err := os.WriteFile(destination, data, 0600); err != nil {
 		return "", err
 	}
-	return filepath.ToSlash(filepath.Join(".astra", "attachments", filepath.Base(destination))), nil
+	return filepath.ToSlash(destination), nil
 }
 
-func saveLargePaste(root, content string) string {
-	destination := filepath.Join(root, ".astra", "attachments", "paste-"+uuid.New().String()+".txt")
-	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+func saveLargePaste(root, sessionID, content string) string {
+	destination := filepath.Join(config.ProjectDataRoot(root), "sessions", safePathPart(sessionID), "attachments", "paste-"+uuid.New().String()+".txt")
+	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
 		return "I received a large paste, but could not save it: " + err.Error()
 	}
-	if err := os.WriteFile(destination, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(destination, []byte(content), 0600); err != nil {
 		return "I received a large paste, but could not save it: " + err.Error()
 	}
-	rel, _ := filepath.Rel(root, destination)
-	return fmt.Sprintf("I pasted a large input. Read the saved attachment at %s and use it as the source for this request.", filepath.ToSlash(rel))
+	return fmt.Sprintf("I pasted a large input. Read the saved attachment at %s and use it as the source for this request.", filepath.ToSlash(destination))
+}
+
+func safePathPart(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))[:24]
 }
 
 func printCLIEvent(message string) {

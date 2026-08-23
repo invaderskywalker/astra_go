@@ -53,8 +53,11 @@ and streaming event renderer.
 
 ## Storage and authority
 
+Astra-owned session state defaults to `~/.astra/projects/`, outside connected
+repositories. Set `ASTRA_DATA_DIR` to relocate it.
+
 Views are intentionally read-only. They count and list the project workspace,
-`.astra` managed artifacts/attachments, global user Mind Palace files, session
+external Astra-managed artifacts/attachments, global user Mind Palace files, session
 manifests/evidence, and local sync records. A view never implies that a file was
 uploaded or changed. Mutations still require an agent action or an explicit
 local command.

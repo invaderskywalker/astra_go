@@ -19,10 +19,11 @@ type ActionHandler func(map[string]any) ActionResult
 // DataActions is a thin adapter between the planner and local repository,
 // command, artifact, and Mind Palace tools.
 type DataActions struct {
-	actions   map[string]ActionSpec
-	UserID    int
-	memory    *mindpalace.Store
-	workspace *workspace.Workspace
+	actions     map[string]ActionSpec
+	UserID      int
+	memory      *mindpalace.Store
+	workspace   *workspace.Workspace
+	managedRoot string
 }
 
 type ActionSummary struct {
@@ -117,10 +118,18 @@ func NewDataActionsForSessionAt(_ any, userID int, sessionID, workspaceRoot stri
 	if legacyMemoryRoot != cfg.MindPalaceRoot {
 		_ = mindpalace.MigrateLegacyRoot(legacyMemoryRoot, cfg.MindPalaceRoot)
 	}
-	a := &DataActions{actions: make(map[string]ActionSpec), UserID: userID, workspace: ws, memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID)}
+	a := &DataActions{actions: make(map[string]ActionSpec), UserID: userID, workspace: ws, managedRoot: filepath.Join(cfg.AstraRoot, "projects", configProjectID(ws.Root)), memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID)}
 	a.registerCoreActions()
 	a.registerKnowledgeActions()
 	return a
+}
+
+func configProjectID(root string) string {
+	return filepath.Base(config.ProjectDataRoot(root))
+}
+
+func (a *DataActions) managedSessionRoot() string {
+	return filepath.Join(a.managedRoot, "sessions", safeSessionName(a.memorySessionID()))
 }
 
 func (a *DataActions) register(spec ActionSpec) {
@@ -129,7 +138,7 @@ func (a *DataActions) register(spec ActionSpec) {
 }
 
 func (a *DataActions) registerCoreActions() {
-	a.register(ActionSpec{Name: "write_artifact", Description: "Writes a durable user-facing artifact in a validated format.", Guidance: "Use this for useful deliverables from an interaction: Markdown for plans/notes/reports, JSON for structured state, JSONL for append-only events, CSV for tables, and text for simple output. Write a concise, complete artifact once the content is supported by evidence. Astra chooses the safe .astra/artifacts/session destination; do not use code-edit tools for user artifacts.", Params: WriteArtifactParams{}, handler: decodeHandler(a.WriteArtifact)})
+	a.register(ActionSpec{Name: "write_artifact", Description: "Writes a durable user-facing artifact in a validated format.", Guidance: "Use this for useful deliverables from an interaction: Markdown for plans/notes/reports, JSON for structured state, JSONL for append-only events, CSV for tables, and text for simple output. Write a concise, complete artifact once the content is supported by evidence. Astra chooses a private external project/session destination; do not use code-edit tools for user artifacts.", Params: WriteArtifactParams{}, handler: decodeHandler(a.WriteArtifact)})
 	a.register(ActionSpec{Name: "apply_code_edits", Description: "Preview or apply atomic, precise code edits.", Guidance: "Inspect the target first. Prefer replace, insert_before, insert_after, or delete with a unique match/anchor. Run dry_run first for risky edits. Do not use replace_file unless rewriting a complete file. Canonical fields are file, match, and new_code; path, find, and replace are accepted aliases.", Params: ApplyCodeEditsParams{}, handler: decodeHandler(a.applyCodeEdits)})
 	a.register(ActionSpec{Name: "list_files", Description: "Lists repository files and metadata without reading their contents.", Guidance: "Use this to orient yourself. Search before reading unrelated files.", Params: ListFilesParams{}, handler: decodeHandler(a.ListFiles)})
 	a.register(ActionSpec{Name: "create_directory", Description: "Creates a directory tree inside the connected workspace.", Guidance: "Use this when bootstrapping a project or preparing a documented folder structure. Paths are relative to the connected workspace and parent directories are created safely.", Params: CreateDirectoryParams{}, handler: decodeHandler(a.CreateDirectory)})

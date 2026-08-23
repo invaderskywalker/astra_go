@@ -84,13 +84,20 @@ func RunLocal(root string) Report {
 		return report
 	}
 	previousMemoryRoot, hadMemoryRoot := os.LookupEnv("ASTRA_MIND_PALACE_DIR")
+	previousDataRoot, hadDataRoot := os.LookupEnv("ASTRA_DATA_DIR")
 	memoryRoot := filepath.Join(root, ".astra", "mind-palace")
 	_ = os.Setenv("ASTRA_MIND_PALACE_DIR", memoryRoot)
+	_ = os.Setenv("ASTRA_DATA_DIR", filepath.Join(root, ".astra", "data"))
 	defer func() {
 		if hadMemoryRoot {
 			_ = os.Setenv("ASTRA_MIND_PALACE_DIR", previousMemoryRoot)
 		} else {
 			_ = os.Unsetenv("ASTRA_MIND_PALACE_DIR")
+		}
+		if hadDataRoot {
+			_ = os.Setenv("ASTRA_DATA_DIR", previousDataRoot)
+		} else {
+			_ = os.Unsetenv("ASTRA_DATA_DIR")
 		}
 	}()
 
@@ -143,7 +150,10 @@ func checkArtifacts(registry *actions.DataActions, root string, add func(string,
 		passed := result != nil && result.Success && len(result.FilesWritten) == 1 && strings.HasSuffix(result.FilesWritten[0], test.ext)
 		evidence := strings.Join(result.FilesWritten, ", ")
 		if passed {
-			path := filepath.Join(root, filepath.FromSlash(result.FilesWritten[0]))
+			path := filepath.FromSlash(result.FilesWritten[0])
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(root, path)
+			}
 			written, readErr := os.ReadFile(path)
 			passed = readErr == nil && artifactContentValid(test.format, string(written))
 			if readErr != nil {

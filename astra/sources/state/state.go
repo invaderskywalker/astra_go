@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"astra/astra/config"
 )
 
 type ProjectManifest struct {
@@ -35,13 +37,50 @@ type SessionManifest struct {
 	Model           string    `json:"model"`
 }
 
+// ProjectDataRoot is the Astra-owned storage area for a connected project.
+// It intentionally lives outside the repository so connecting to many
+// directories does not scatter Astra metadata through source trees.
+func ProjectDataRoot(root string) string { return config.ProjectDataRoot(root) }
+
+func projectManifestPath(root string) string {
+	return filepath.Join(ProjectDataRoot(root), "project.json")
+}
+
+func SessionRoot(root, sessionID string) string {
+	return filepath.Join(ProjectDataRoot(root), "sessions", safe(sessionID))
+}
+
+func SessionManifestPath(root, sessionID string) string {
+	return filepath.Join(SessionRoot(root, sessionID), "manifest.json")
+}
+
+func SessionHistoryPath(root, sessionID string) string {
+	return filepath.Join(SessionRoot(root, sessionID), "chat.jsonl")
+}
+
+func SessionArtifactsRoot(root, sessionID string) string {
+	return filepath.Join(ProjectDataRoot(root), "artifacts", safe(sessionID))
+}
+
+func SessionAttachmentsRoot(root, sessionID string) string {
+	return filepath.Join(SessionRoot(root, sessionID), "attachments")
+}
+
+func SessionSyncRoot(root, sessionID string) string {
+	return filepath.Join(SessionRoot(root, sessionID), "sync")
+}
+
 func ProjectID(root string) string {
-	digest := sha256.Sum256([]byte(root))
+	digest := sha256.Sum256([]byte(filepath.Clean(root)))
 	return "project_" + hex.EncodeToString(digest[:])[:16]
 }
 
 func EnsureProject(root string) (ProjectManifest, error) {
-	path := filepath.Join(root, ".astra", "project.json")
+	dataRoot := ProjectDataRoot(root)
+	if err := migrateLegacyProject(filepath.Join(root, ".astra"), dataRoot); err != nil {
+		return ProjectManifest{}, err
+	}
+	path := filepath.Join(dataRoot, "project.json")
 	var manifest ProjectManifest
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -55,13 +94,65 @@ func EnsureProject(root string) (ProjectManifest, error) {
 	return manifest, writeJSON(path, manifest)
 }
 
+// migrateLegacyProject makes the storage move non-destructive for projects
+// created by older Astra versions. It copies only missing managed files and
+// leaves the original .astra tree recoverable for the user to remove later.
+func migrateLegacyProject(legacyRoot, targetRoot string) error {
+	if _, err := os.Stat(legacyRoot); os.IsNotExist(err) {
+		return nil
+	}
+	marker := filepath.Join(targetRoot, ".legacy-migrated")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	for _, name := range []string{"project.json", "sessions", "artifacts", "attachments", "sync"} {
+		if err := copyMissing(filepath.Join(legacyRoot, name), filepath.Join(targetRoot, name)); err != nil {
+			return err
+		}
+	}
+	return writeJSON(marker, map[string]any{"migrated_at": time.Now().UTC(), "source": legacyRoot})
+}
+
+func copyMissing(source, target string) error {
+	_, err := os.Stat(source)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return filepath.Walk(source, func(path string, fileInfo os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		destination := target
+		if rel != "." {
+			destination = filepath.Join(target, rel)
+		}
+		if fileInfo.IsDir() {
+			return os.MkdirAll(destination, 0700)
+		}
+		if _, err := os.Stat(destination); err == nil {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(destination, data, 0600)
+	})
+}
+
 func EnsureSession(root string, userID int, sessionID, provider, model string) (SessionManifest, error) {
 	project, err := EnsureProject(root)
 	if err != nil {
 		return SessionManifest{}, err
 	}
-	sessionRoot := filepath.Join(root, ".astra", "sessions", safe(sessionID))
-	path := filepath.Join(sessionRoot, "manifest.json")
+	path := SessionManifestPath(root, sessionID)
 	var manifest SessionManifest
 	data, readErr := os.ReadFile(path)
 	if readErr == nil {
@@ -69,7 +160,7 @@ func EnsureSession(root string, userID int, sessionID, provider, model string) (
 	}
 	now := time.Now().UTC()
 	if manifest.SessionID == "" {
-		manifest = SessionManifest{SessionID: sessionID, UserID: userID, ProjectID: project.ProjectID, WorkspaceRoot: root, ArtifactsRoot: filepath.Join(root, ".astra", "artifacts", safe(sessionID)), AttachmentsRoot: filepath.Join(root, ".astra", "attachments"), StartedAt: now, Status: "active", Provider: provider, Model: model}
+		manifest = SessionManifest{SessionID: sessionID, UserID: userID, ProjectID: project.ProjectID, WorkspaceRoot: root, ArtifactsRoot: SessionArtifactsRoot(root, sessionID), AttachmentsRoot: SessionAttachmentsRoot(root, sessionID), StartedAt: now, Status: "active", Provider: provider, Model: model}
 	} else {
 		manifest.LastSeenAt = now
 		manifest.Provider, manifest.Model, manifest.Status = provider, model, "active"
@@ -81,7 +172,7 @@ func EnsureSession(root string, userID int, sessionID, provider, model string) (
 }
 
 func CloseSession(root string, sessionID string) error {
-	path := filepath.Join(root, ".astra", "sessions", safe(sessionID), "manifest.json")
+	path := SessionManifestPath(root, sessionID)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -100,7 +191,7 @@ func writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".astra-state-")

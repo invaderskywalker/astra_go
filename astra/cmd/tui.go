@@ -7,6 +7,7 @@ package main
 
 import (
 	"astra/astra/agents/core"
+	"astra/astra/sources/state"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -336,7 +337,7 @@ func (m *tuiModel) handleLocalCommand(query string) {
 			m.entries = append(m.entries, tuiEntry{kind: "question", text: "Usage: :attach <file-path>"})
 			return
 		}
-		if target, err := attachCLIFile(m.root, parts[1]); err != nil {
+		if target, err := attachCLIFile(m.root, m.agent.SessionID, parts[1]); err != nil {
 			m.entries = append(m.entries, tuiEntry{kind: "error", text: err.Error()})
 		} else {
 			m.entries = append(m.entries, tuiEntry{kind: "status", text: "Attached: " + target})
@@ -505,8 +506,8 @@ func (m *tuiModel) viewTab() string {
 
 func (m *tuiModel) dashboardView() string {
 	workspaceFiles, workspaceDirs := countFiles(m.root)
-	artifactFiles, _ := countFiles(filepath.Join(m.root, ".astra", "artifacts"))
-	attachmentFiles, _ := countFiles(filepath.Join(m.root, ".astra", "attachments"))
+	artifactFiles, _ := countFiles(state.SessionArtifactsRoot(m.root, m.agent.SessionID))
+	attachmentFiles, _ := countFiles(state.SessionAttachmentsRoot(m.root, m.agent.SessionID))
 	memoryFiles, memoryDirs := countFiles(filepath.Join(m.memoryRoot, "users", fmt.Sprintf("%d", m.agent.UserID), "memory"))
 	lines := []string{
 		tuiStyleTitle.Render("DASHBOARD"),
@@ -556,7 +557,7 @@ func (m *tuiModel) fileView(title, root, description string) string {
 }
 
 func (m *tuiModel) sessionsView() string {
-	project := filepath.Join(m.root, ".astra", "sessions")
+	project := filepath.Join(state.ProjectDataRoot(m.root), "sessions")
 	lines := []string{tuiStyleTitle.Render("SESSIONS"), "Every session has a local manifest and durable evidence trail.", "", tuiStyleMuted.Render(project), ""}
 	entries, _ := os.ReadDir(project)
 	if len(entries) == 0 {
@@ -572,7 +573,7 @@ func (m *tuiModel) sessionsView() string {
 }
 
 func (m *tuiModel) syncView() string {
-	syncFiles, _ := countFiles(filepath.Join(m.root, ".astra", "sync"))
+	syncFiles, _ := countFiles(filepath.Join(state.ProjectDataRoot(m.root), "sessions"))
 	lines := []string{
 		tuiStyleTitle.Render("SYNC & STORAGE"),
 		"Local files are the source of truth. External sync is opt-in and currently disabled.",
@@ -701,7 +702,7 @@ func collectTUIFiles(root string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			if path != root && (info.Name() == ".git" || info.Name() == "node_modules") {
+			if path != root && (info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == ".astra") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -727,7 +728,7 @@ func collectTUITree(root string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			if info.Name() == ".git" || info.Name() == "node_modules" {
+			if info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == ".astra" {
 				return filepath.SkipDir
 			}
 			rel, _ := filepath.Rel(root, path)

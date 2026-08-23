@@ -27,6 +27,9 @@ func TestTUICollectFilesSkipsCachesAndSorts(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "node_modules"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, ".astra"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "z.md"), []byte("z"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +37,9 @@ func TestTUICollectFilesSkipsCachesAndSorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "node_modules", "ignored.js"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".astra", "managed.json"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	files := collectTUIFiles(root)

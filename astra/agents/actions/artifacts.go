@@ -35,10 +35,14 @@ func (a *DataActions) WriteArtifact(params WriteArtifactParams) ActionResult {
 	if name == "" {
 		return ActionResult{Success: false, Error: "title must contain letters or numbers"}
 	}
-	path := filepath.ToSlash(filepath.Join(".astra", "artifacts", safeSessionName(a.memorySessionID()), name+extension))
-	if err := a.workspace.CreateFile(path, []byte(params.Content)); err != nil {
+	path := filepath.Join(a.managedRoot, "artifacts", safeSessionName(a.memorySessionID()), name+extension)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return ActionResult{Success: false, Error: fmt.Sprintf("prepare artifact directory: %v", err)}
+	}
+	if err := os.WriteFile(path, []byte(params.Content), 0600); err != nil {
 		return ActionResult{Success: false, Error: fmt.Sprintf("write artifact: %v", err)}
 	}
+	path = filepath.ToSlash(path)
 	warnings := a.syncManagedFile(path, []byte(params.Content), artifactContentType(format))
 	return ActionResult{Success: true, Summary: "Artifact written: " + path, FilesWritten: []string{path}, Artifacts: []string{path}, Warnings: warnings}
 }
@@ -63,7 +67,7 @@ func (a *DataActions) syncManagedFile(path string, data []byte, contentType stri
 	// Artifacts remain local by default. A future explicit export/sync command
 	// may copy these managed files elsewhere, but writes never contact a remote
 	// service implicitly.
-	key := filepath.ToSlash(filepath.Join("local", "projects", safeSessionName(filepath.Base(a.workspace.Root)), "sessions", safeSessionName(a.memorySessionID()), strings.TrimPrefix(path, ".astra/")))
+	key := filepath.ToSlash(filepath.Join("local", "projects", configProjectID(a.workspace.Root), "sessions", safeSessionName(a.memorySessionID()), "artifacts", filepath.Base(path)))
 	_ = data
 	_ = contentType
 	a.writeSyncRecord(path, key, "local_only", "External sync is disabled by default")
@@ -76,12 +80,12 @@ func (a *DataActions) writeSyncRecord(path, key, status, message string) {
 	if err != nil {
 		return
 	}
-	rel := filepath.ToSlash(filepath.Join(".astra", "sync", safeSessionName(a.memorySessionID()), artifactName(filepath.Base(path))+".json"))
-	absolute := filepath.Join(a.workspace.Root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(absolute), 0755); err != nil {
+	rel := filepath.Join(a.managedRoot, "sessions", safeSessionName(a.memorySessionID()), "sync", artifactName(filepath.Base(path))+".json")
+	absolute := filepath.Clean(rel)
+	if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
 		return
 	}
-	_ = os.WriteFile(absolute, append(data, '\n'), 0644)
+	_ = os.WriteFile(absolute, append(data, '\n'), 0600)
 }
 
 func (a *DataActions) memorySessionID() string { return a.memory.SessionID() }

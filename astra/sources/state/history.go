@@ -18,10 +18,6 @@ type ChatMessage struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func SessionHistoryPath(root, sessionID string) string {
-	return filepath.Join(root, ".astra", "sessions", safe(sessionID), "chat.jsonl")
-}
-
 func AppendChatMessage(root, sessionID, role, content string) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
