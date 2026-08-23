@@ -139,6 +139,11 @@ the source body. It then uses `search_code` and bounded `read_files` ranges,
 iterating only when new evidence requires another part of the file. This keeps
 large repositories useful without filling the model context window.
 
+For unfamiliar or polyglot repositories, `detect_repository_stack` first
+identifies project manifests, languages, frameworks, modules, test signals, and
+likely validation commands. It supports monorepos and mixed stacks without
+assuming that Go, JavaScript, or Python is the primary language.
+
 Explicitly attached files and very large single-line pastes are copied into the
 private Astra data directory for the current project/session, outside the
 repository, and passed to Astra by reference. This keeps source trees clean
@@ -300,7 +305,11 @@ project, session, artifacts, and attachments through its views. Set
 never uploaded implicitly.
 
 The agent uses `save_memory`, `search_memory`, `list_memory`, and `link_memory`.
-Use Markdown for learnings and decisions, JSONL for append-only events, JSON for indexes, and CSV only for tabular artifacts.
+Mind Palace memory is organized as a Sherlock-style evidence graph: one idea
+per Markdown block, explicit provenance and confidence, hubs for stable
+domains, reciprocal links, and supersession instead of silent overwrites.
+Use JSONL for append-only events, JSON for indexes, and CSV only for tabular
+artifacts.
 
 Agent prompts, behavioral instructions, and output schemas are code-owned in
 `astra/agents/prompts/prompts.go`; Astra does not load agent YAML instruction files.

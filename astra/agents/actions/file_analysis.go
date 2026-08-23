@@ -201,18 +201,73 @@ func languageForPath(path string) string {
 		return "typescript"
 	case ".js", ".jsx":
 		return "javascript"
+	case ".mjs", ".cjs":
+		return "javascript"
+	case ".vue":
+		return "vue"
+	case ".svelte":
+		return "svelte"
+	case ".astro":
+		return "astro"
 	case ".py":
 		return "python"
 	case ".rs":
 		return "rust"
-	case ".java":
+	case ".java", ".kt", ".kts", ".scala", ".groovy":
+		if strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".kt") || strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".kts") {
+			return "kotlin"
+		}
+		if strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".scala") {
+			return "scala"
+		}
+		if strings.HasSuffix(strings.ToLower(filepath.Ext(path)), ".groovy") {
+			return "groovy"
+		}
 		return "java"
+	case ".c", ".h":
+		return "c"
+	case ".cc", ".cpp", ".cxx", ".hpp", ".hh":
+		return "c++"
+	case ".cs":
+		return "c#"
+	case ".fs", ".fsx":
+		return "f#"
+	case ".swift":
+		return "swift"
+	case ".m", ".mm":
+		return "objective-c"
+	case ".rb", ".rake":
+		return "ruby"
+	case ".php":
+		return "php"
+	case ".ex", ".exs":
+		return "elixir"
+	case ".hs", ".lhs":
+		return "haskell"
+	case ".dart":
+		return "dart"
+	case ".lua":
+		return "lua"
+	case ".r":
+		return "r"
+	case ".sh", ".bash", ".zsh", ".fish", ".ps1":
+		return "shell"
 	case ".md", ".mdx":
 		return "markdown"
 	case ".json":
 		return "json"
+	case ".toml":
+		return "toml"
 	case ".yaml", ".yml":
 		return "yaml"
+	case ".sql":
+		return "sql"
+	case ".graphql", ".gql":
+		return "graphql"
+	case ".proto":
+		return "protobuf"
+	case ".tf", ".tfvars":
+		return "terraform"
 	case ".css", ".scss":
 		return "css"
 	case ".html":

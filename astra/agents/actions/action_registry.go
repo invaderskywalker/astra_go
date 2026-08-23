@@ -54,7 +54,7 @@ func applyDocumentationDefaults(spec *ActionSpec) {
 			spec.Category = "orchestration"
 		case "run_command", "run_commands", "build_project", "run_tests", "git_status":
 			spec.Category = "engineering"
-		case "read_files", "list_files", "search_code", "inspect_file", "analyze_files", "create_directory":
+		case "read_files", "list_files", "search_code", "inspect_file", "analyze_files", "detect_repository_stack", "create_directory":
 			spec.Category = "repository"
 		case "write_artifact", "apply_code_edits":
 			spec.Category = "delivery"
@@ -112,6 +112,8 @@ func applyDocumentationDefaults(spec *ActionSpec) {
 			spec.ParameterNotes = map[string]string{"path": "Relative Go source path to summarize."}
 		case "analyze_files":
 			spec.ParameterNotes = map[string]string{"paths": "Files or directories to profile; omit for the connected root.", "query": "Optional text or symbol to locate and turn into bounded read ranges.", "recursive": "Recurse into directories only when needed.", "limit": "Maximum files; defaults to 64 and is capped at 128."}
+		case "detect_repository_stack":
+			spec.ParameterNotes = map[string]string{"path": "Relative repository or module directory from the connected root; omit for the root.", "max_files": "Bounded orientation file budget; defaults to 2000 and is capped at 10000. Generated caches and binary artifacts are excluded automatically."}
 		case "run_command":
 			spec.ParameterNotes = map[string]string{"command": "Executable only, or a simple whitespace-separated command for compatibility; no shell operators.", "args": "Separate argv-style arguments.", "working_directory": "Relative directory from the connected root or an explicitly approved absolute scope.", "required_permission": "execute for read/check commands; write when the command is expected to modify files.", "timeout_seconds": "Bounded timeout; use the smallest useful value."}
 		case "run_commands":

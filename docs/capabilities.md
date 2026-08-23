@@ -26,6 +26,7 @@ and available actions—is injected into the prompts instead of being guessed.
 | Capability | Current behavior | Evidence/output | Primary implementation |
 | --- | --- | --- | --- |
 | Conversation | Answers questions and explains concepts without pretending tools ran | User-facing response | `astra/agents/prompts` and `BaseAgent` |
+| Repository intelligence | Detects polyglot stacks, monorepo modules, frameworks, test signals, project manifests, generated content, and likely validation commands before language-specific work | Ecosystems, languages, framework evidence, manifests, test paths, bounded validation command suggestions, scan warnings | `astra/agents/actions/stack_detection.go` |
 | Workspace orientation | Lists files, creates directory trees, searches text, analyzes file metadata/structure, reads bounded files, and inspects Go structure | Paths, sizes, hashes, line counts, headings, symbols, matches, recommended ranges, snippets, diagnostics; generated caches and binary artifacts are excluded from recursive analysis | `astra/agents/workspace`, `astra/agents/actions` |
 | Code delivery | Applies precise edits, then can build/test | Changed files plus validator output | `astra/agents/actions/edits.go`, `engineering.go` |
 | Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output; expected non-zero checks can be marked | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
@@ -87,6 +88,11 @@ context.
   plan. The state is updated after every action with current evidence,
   completed work, remaining work, blockers, verification status, and the next
   action.
+- Mind Palace organization follows a Sherlock-style evidence graph: one idea
+  per block, explicit confidence and provenance, hubs for stable domains,
+  reciprocal links to related decisions and artifacts, and supersession when
+  newer evidence contradicts an older block. Retrieval follows the smallest
+  relevant chain instead of loading the archive as a transcript.
 - Large-file analysis is progressive: `analyze_files` streams metadata and
   structural signals without returning source bodies; `search_code` locates
   evidence; `read_files` streams only requested line ranges. Results are
