@@ -7,17 +7,19 @@ import (
 )
 
 type RunCommandActionParams struct {
-	Command          string   `json:"command"`
-	Args             []string `json:"args,omitempty"`
-	WorkingDirectory string   `json:"working_directory,omitempty"`
-	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
+	Command            string   `json:"command"`
+	Args               []string `json:"args,omitempty"`
+	WorkingDirectory   string   `json:"working_directory,omitempty"`
+	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`
+	RequiredPermission string   `json:"required_permission,omitempty"` // execute or write
 }
 type CommandRequest struct {
-	Command          string   `json:"command"`
-	Args             []string `json:"args,omitempty"`
-	WorkingDirectory string   `json:"working_directory,omitempty"`
-	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
-	AllowFailure     bool     `json:"allow_failure,omitempty"`
+	Command            string   `json:"command"`
+	Args               []string `json:"args,omitempty"`
+	WorkingDirectory   string   `json:"working_directory,omitempty"`
+	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`
+	AllowFailure       bool     `json:"allow_failure,omitempty"`
+	RequiredPermission string   `json:"required_permission,omitempty"`
 }
 type RunCommandsParams struct {
 	Commands        []CommandRequest `json:"commands"`
@@ -37,7 +39,11 @@ func (a *DataActions) RunCommand(params RunCommandActionParams) ActionResult {
 	if err := validateCommandName(params.Command); err != nil {
 		return ActionResult{Success: false, Error: err.Error()}
 	}
-	result := a.workspace.RunCommand(workspace.RunCommandParams{Cmd: params.Command, Args: params.Args, Cwd: params.WorkingDirectory, TimeoutSec: params.TimeoutSeconds})
+	cwd, err := a.commandDirectoryWithPermission(params.WorkingDirectory, params.RequiredPermission)
+	if err != nil {
+		return ActionResult{Success: false, Error: err.Error()}
+	}
+	result := a.workspace.RunCommandAt(cwd, workspace.RunCommandParams{Cmd: params.Command, Args: params.Args, TimeoutSec: params.TimeoutSeconds})
 	actionResult := commandResult(params.Command, result)
 	if normalized {
 		actionResult.Warnings = append(actionResult.Warnings, "normalized a whitespace-separated command into executable and arguments")
@@ -62,8 +68,12 @@ func (a *DataActions) RunCommands(params RunCommandsParams) ActionResult {
 		if err := validateCommandName(executable); err != nil {
 			return ActionResult{Success: false, Error: fmt.Sprintf("commands[%d]: %v", index, err), Diagnostics: results}
 		}
-		result := a.workspace.RunCommand(workspace.RunCommandParams{
-			Cmd: executable, Args: args, Cwd: command.WorkingDirectory, TimeoutSec: command.TimeoutSeconds,
+		cwd, err := a.commandDirectoryWithPermission(command.WorkingDirectory, command.RequiredPermission)
+		if err != nil {
+			return ActionResult{Success: false, Summary: fmt.Sprintf("Stopped before command %d", index+1), Diagnostics: results, Error: err.Error()}
+		}
+		result := a.workspace.RunCommandAt(cwd, workspace.RunCommandParams{
+			Cmd: executable, Args: args, TimeoutSec: command.TimeoutSeconds,
 		})
 		results = append(results, result)
 		if result.Error != "" {

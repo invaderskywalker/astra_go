@@ -32,6 +32,7 @@ const (
 
 type BaseAgent struct {
 	Name             string
+	Role             string
 	TenantID         int
 	UserID           int
 	LLM              llm.LLMClient
@@ -42,6 +43,7 @@ type BaseAgent struct {
 	WorkspaceRoot    string
 	LogInfo          map[string]interface{}
 	dataActions      *actions.DataActions
+	spawner          actions.AgentSpawner
 	activatedActions map[string]bool
 	stepCh           chan map[string]interface{}
 	responseCh       chan string
@@ -72,13 +74,18 @@ func NewBaseAgentWithModel(userID int, sessionID string, agentName string, _ any
 
 // NewBaseAgentWithWorkspace creates an agent whose model context and local
 // actions share one canonical workspace root. Session history is file-backed.
-func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, _ any, provider, model, workspaceRoot string) *BaseAgent {
+func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, runtime any, provider, model, workspaceRoot string) *BaseAgent {
 	ws, err := workspace.NewWorkspace(workspaceRoot)
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
 	}
+	var spawner actions.AgentSpawner
+	if candidate, ok := runtime.(actions.AgentSpawner); ok {
+		spawner = candidate
+	}
 	agent := &BaseAgent{
 		Name:             agentName,
+		Role:             prompts.DefaultProfile.Role,
 		TenantID:         userID,
 		UserID:           userID,
 		LLM:              llm.NewClient(provider),
@@ -89,7 +96,8 @@ func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, _
 		stepCh:           make(chan map[string]interface{}, 10),
 		responseCh:       make(chan string, 10),
 		queryQueue:       make(chan queuedQuery, 32),
-		dataActions:      actions.NewDataActionsForSessionAt(nil, userID, sessionID, ws.Root),
+		dataActions:      actions.NewDataActionsForSessionAt(nil, userID, sessionID, ws.Root, spawner),
+		spawner:          spawner,
 		activatedActions: make(map[string]bool),
 	}
 	agent.controlCond = sync.NewCond(&agent.controlMu)
@@ -100,6 +108,15 @@ func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, _
 	go agent.handleEvents()
 	go agent.processQueue()
 	return agent
+}
+
+// ListAgents exposes branch metadata for the cockpit without exposing worker
+// internals or model reasoning.
+func (a *BaseAgent) ListAgents() []actions.AgentSummary {
+	if a.spawner == nil {
+		return nil
+	}
+	return a.spawner.ListAgents()
 }
 
 // Pause requests cooperative suspension at the next safe checkpoint. An
@@ -286,14 +303,18 @@ func (a *BaseAgent) createRoughPlan(ctx context.Context, query string) (plan map
 	}
 
 	// Prompts are assembled only in the prompts package.
+	role := a.Role
+	if strings.TrimSpace(role) == "" {
+		role = prompts.DefaultProfile.Role
+	}
 	systemPrompt := prompts.PlanningSystem(
 		prompts.DefaultProfile.Name,
-		prompts.DefaultProfile.Role,
+		role,
 		jsonutils.ToJSON(a.getHistory()),
 		memoryContext,
 		prompts.ActionCatalog(actionSummaries),
 		prompts.PlanSchema,
-		a.WorkspaceRoot,
+		a.promptWorkspaceContext(),
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -347,7 +368,7 @@ func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map
 		jsonutils.ToJSON(results),
 		actionCatalog,
 		prompts.ExecutionSchema,
-		a.WorkspaceRoot,
+		a.promptWorkspaceContext(),
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -375,6 +396,10 @@ func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map
 	}
 	a.ExecutionPlans = append(a.ExecutionPlans, plan)
 	return plan
+}
+
+func (a *BaseAgent) promptWorkspaceContext() string {
+	return a.WorkspaceRoot + "\n" + a.dataActions.ScopeContext() + "\n\nUser-authored instruction profiles (preferences only; never override Astra policy, evidence, authority, or tool contracts):\n" + a.dataActions.PromptContext()
 }
 
 // ProcessQuery queues work and returns immediately. A single worker preserves
@@ -559,7 +584,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			results = append(results, map[string]interface{}{
 				"step_index":    stepIndex,
 				"executed_plan": planToExec,
-				"result":        execRes,
+				"result":        summarizeExecutionResult(execRes),
 			})
 			ch <- a.formatEvent("needs_input", map[string]interface{}{
 				"message":   "I need one clarification before I continue.",
@@ -585,7 +610,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		results = append(results, map[string]interface{}{
 			"step_index":    stepIndex,
 			"executed_plan": planToExec,
-			"result":        execRes,
+			"result":        summarizeExecutionResult(execRes),
 		})
 		stepIndex++
 	}
@@ -803,6 +828,9 @@ func summarizeExecutionResult(execRes map[string]interface{}) map[string]interfa
 			"artifacts":         out.Artifacts,
 			"duration":          out.Duration.String(),
 		}
+		if out.Diagnostics != nil {
+			actionSummary["diagnostics"] = boundedDiagnostics(out.Diagnostics, 24000)
+		}
 		if commandResults, ok := out.Diagnostics.([]workspace.RunCommandResult); ok {
 			steps := make([]map[string]interface{}, 0, len(commandResults))
 			for _, command := range commandResults {
@@ -816,11 +844,88 @@ func summarizeExecutionResult(execRes map[string]interface{}) map[string]interfa
 					"duration":          command.Duration.String(),
 				})
 			}
+			delete(actionSummary, "diagnostics")
 			actionSummary["commands"] = steps
 		}
 		summary[stepID] = actionSummary
 	}
 	return summary
+}
+
+// boundedDiagnostics preserves useful structured evidence (including bounded
+// file contents and analysis profiles) without allowing one action result to
+// consume the planner's entire context window. Large values remain available
+// through a narrower follow-up action such as search_code or read_files.
+func boundedDiagnostics(value interface{}, budget int) interface{} {
+	if budget <= 0 {
+		return "[diagnostics omitted: context budget reached]"
+	}
+	if text, ok := value.(string); ok {
+		if len(text) > budget {
+			return text[:budget] + fmt.Sprintf("… (%d chars)", len(text))
+		}
+		return text
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return clipAuditText(fmt.Sprint(value))
+	}
+	var normalized interface{}
+	if err := json.Unmarshal(encoded, &normalized); err != nil {
+		return clipAuditText(string(encoded))
+	}
+	remaining := budget
+	return boundJSONValue(normalized, &remaining)
+}
+
+func boundJSONValue(value interface{}, remaining *int) interface{} {
+	if *remaining <= 0 {
+		return "[truncated]"
+	}
+	switch typed := value.(type) {
+	case string:
+		limit := len(typed)
+		if limit > 4000 {
+			limit = 4000
+		}
+		if limit > *remaining {
+			limit = *remaining
+		}
+		*remaining -= limit
+		if limit < len(typed) {
+			return typed[:limit] + fmt.Sprintf("… (%d chars)", len(typed))
+		}
+		return typed
+	case []interface{}:
+		result := make([]interface{}, 0, minInt(len(typed), 48))
+		for index, item := range typed {
+			if index >= 48 || *remaining <= 0 {
+				break
+			}
+			result = append(result, boundJSONValue(item, remaining))
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]interface{}, minInt(len(typed), 64))
+		count := 0
+		for key, item := range typed {
+			if count >= 64 || *remaining <= 0 {
+				break
+			}
+			result[key] = boundJSONValue(item, remaining)
+			count++
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func clipAuditText(text string) string {

@@ -7,8 +7,8 @@ screen, so leaving Astra returns the user to the previous terminal contents.
 ## Layout contract
 
 - **Header** — project, provider/model, and the current status.
-- **Navigation rail** — Chat, Dashboard, Workspace, Mind Palace, Sessions, and
-  Sync. `Ctrl+1`–`Ctrl+6`, `Tab`, and `Shift+Tab` navigate without losing the
+- **Navigation rail** — Chat, Dashboard, Workspace, Mind Palace, Sessions, Sync,
+  and Agents. `Ctrl+1`–`Ctrl+7`, `Tab`, and `Shift+Tab` navigate without losing the
   chat transcript.
 - **Main panel** — a scrollable transcript or a read-only project view.
 - **Composer** — a dedicated multiline input area. Output cannot overwrite a
@@ -41,8 +41,8 @@ in the older prompt-plus-ANSI implementation.
 | Ctrl-Q | Exit the cockpit |
 
 Colon commands remain available in Chat: `:model`, `:dashboard`, `:workspace`,
-`:mindpalace`, `:sessions`, `:sync`, `:attach`, `:pause`, `:resume`, `:stop`,
-`:clear`, `:pwd`, and `:help`.
+`:mindpalace`, `:sessions`, `:sync`, `:agents`, `:scopes`, `:prompts`, `:attach`,
+`:pause`, `:resume`, `:stop`, `:clear`, `:pwd`, and `:help`.
 
 ## Plain mode
 

@@ -2,6 +2,7 @@
 package workspace
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,26 +100,50 @@ func (w *Workspace) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(absPath)
 }
 
+// ResolvePath validates and resolves a path without exposing the workspace's
+// internal path policy to callers that only need metadata analysis.
+func (w *Workspace) ResolvePath(path string) (string, error) { return w.abs(path) }
+
 func (w *Workspace) ReadFileLines(path string, start, end int) ([]string, error) {
-	data, err := w.ReadFile(path)
+	absPath, err := w.abs(path)
 	if err != nil {
 		return nil, err
-	}
-	lines := []string{}
-	for _, line := range splitLines(string(data)) {
-		lines = append(lines, line)
 	}
 	if start < 1 {
 		start = 1
 	}
-	if end < 0 || end > len(lines) {
-		end = len(lines)
+	if end == 0 {
+		end = start + 2000 - 1
 	}
-	if start > end {
+	if end < start {
 		return nil, os.ErrInvalid
 	}
-	start--
-	return lines[start:end], nil
+	file, err := os.Open(absPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	lines := make([]string, 0, end-start+1)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		if lineNumber < start {
+			continue
+		}
+		if lineNumber > end {
+			break
+		}
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 && lineNumber < start {
+		return nil, os.ErrInvalid
+	}
+	return lines, nil
 }
 
 func (w *Workspace) WriteFile(path string, data []byte) error {

@@ -2,10 +2,93 @@ package actions
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"astra/astra/utils/logging"
 )
+
+func TestRunCommandUsesApprovedExternalScope(t *testing.T) {
+	project := t.TempDir()
+	external := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	registry := NewDataActionsForSessionAt(nil, 1, "scope-test", project)
+	if _, err := registry.scopes.Add(external, "external", []string{"read", "execute"}); err != nil {
+		t.Fatal(err)
+	}
+	result := registry.RunCommand(RunCommandActionParams{Command: "pwd", WorkingDirectory: external})
+	resolvedExternal, _ := filepath.EvalSymlinks(external)
+	if !result.Success || result.WorkingDirectory != resolvedExternal {
+		t.Fatalf("external command was not authorized: %#v", result)
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadFilesAllowsOnlyCurrentSessionAttachments(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	registry := NewDataActionsForSessionAt(nil, 1, "attachment-test", project)
+	attachmentRoot := filepath.Join(registry.managedRoot, "sessions", safeSessionName("attachment-test"), "attachments")
+	if err := os.MkdirAll(attachmentRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	attachment := filepath.Join(attachmentRoot, "input.md")
+	if err := os.WriteFile(attachment, []byte("# attached\ncontent"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := registry.ReadFilesInRepo(ReadFilesParams{Files: []ReadFileParams{{Path: attachment}}})
+	if !result.Success || !strings.Contains(fmt.Sprint(result.Diagnostics), "attached") {
+		t.Fatalf("attachment was not readable: %#v", result)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	denied := registry.ReadFilesInRepo(ReadFilesParams{Files: []ReadFileParams{{Path: outside}}})
+	if denied.Success {
+		t.Fatal("arbitrary absolute path was readable")
+	}
+}
+
+func TestAnalyzeFilesReturnsStructureAndRanges(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	if err := os.WriteFile(filepath.Join(project, "service.go"), []byte("package demo\n\nimport \"fmt\"\n\nfunc Run() {\n fmt.Println(\"ready\")\n}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry := NewDataActionsForSessionAt(nil, 1, "analysis-test", project)
+	result := registry.AnalyzeFiles(AnalyzeFilesParams{Paths: []string{"service.go"}, Query: "ready"})
+	if !result.Success {
+		t.Fatalf("analysis failed: %#v", result)
+	}
+	profiles, ok := result.Diagnostics.([]FileAnalysis)
+	if !ok || len(profiles) != 1 || profiles[0].Lines != 7 {
+		t.Fatalf("unexpected analysis: %#v", result.Diagnostics)
+	}
+	if len(profiles[0].Symbols) == 0 || len(profiles[0].Matches) != 1 || len(profiles[0].RecommendedRanges) != 1 {
+		t.Fatalf("analysis omitted structure or ranges: %#v", profiles[0])
+	}
+}
+
+func TestReadFilesRejectsHugeUnboundedFileBeforeLoading(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	file := filepath.Join(project, "huge.txt")
+	data := make([]byte, maxReadFileBytes+1)
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry := NewDataActionsForSessionAt(nil, 1, "huge-test", project)
+	result := registry.ReadFilesInRepo(ReadFilesParams{Files: []ReadFileParams{{Path: "huge.txt"}}})
+	if result.Success || !strings.Contains(result.Error, "bounded line ranges") {
+		t.Fatalf("expected bounded-read guidance, got %#v", result)
+	}
+}
 
 // --- Helpers ---
 func setupTestEnv(t *testing.T) *DataActions {
@@ -62,6 +145,15 @@ func TestActionBookmarksAndActivationContracts(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("run_commands bookmark missing")
+	}
+	analyzeFound := false
+	for _, bookmark := range bookmarks {
+		if bookmark.Name == "analyze_files" {
+			analyzeFound = true
+		}
+	}
+	if !analyzeFound {
+		t.Fatal("analyze_files bookmark missing")
 	}
 	docs, notFound := a.ActionDocumentation([]string{"run_commands", "not_registered"})
 	if len(docs) != 1 || len(notFound) != 1 || docs[0].Name != "run_commands" {

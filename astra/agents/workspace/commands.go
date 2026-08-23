@@ -51,6 +51,32 @@ func (w *Workspace) RunCommand(params RunCommandParams) RunCommandResult {
 		result.Error = "working directory is outside the workspace"
 		return result
 	}
+	return runCommandAt(resolvedCWD, params, result)
+}
+
+// RunCommandAt executes in an already-authorized absolute directory. Scope
+// authorization belongs to the action layer; this method deliberately does
+// not decide which roots the caller is allowed to use.
+func (w *Workspace) RunCommandAt(cwd string, params RunCommandParams) RunCommandResult {
+	result := RunCommandResult{Command: strings.Join(append([]string{params.Cmd}, params.Args...), " ")}
+	resolvedCWD, err := filepath.Abs(cwd)
+	if err != nil {
+		result.Error = "invalid working directory: " + err.Error()
+		return result
+	}
+	resolvedCWD = filepath.Clean(resolvedCWD)
+	if evaluated, err := filepath.EvalSymlinks(resolvedCWD); err == nil {
+		resolvedCWD = evaluated
+	}
+	if info, err := os.Stat(resolvedCWD); err != nil || !info.IsDir() {
+		result.Error = "working directory is not a directory"
+		return result
+	}
+	result.WorkingDirectory = resolvedCWD
+	return runCommandAt(resolvedCWD, params, result)
+}
+
+func runCommandAt(resolvedCWD string, params RunCommandParams, result RunCommandResult) RunCommandResult {
 	timeout := time.Duration(params.TimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -62,7 +88,7 @@ func (w *Workspace) RunCommand(params RunCommandParams) RunCommandResult {
 	cmd.Dir = resolvedCWD
 	stdout, stderr := &strings.Builder{}, &strings.Builder{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	result.Duration, result.Stdout, result.Stderr = time.Since(started), stdout.String(), stderr.String()
 	if cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()

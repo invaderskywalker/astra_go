@@ -5,6 +5,8 @@ import (
 	"astra/astra/agents/workspace"
 	"astra/astra/config"
 	"astra/astra/sources/mindpalace"
+	"astra/astra/sources/promptstore"
+	"astra/astra/sources/scope"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,6 +26,9 @@ type DataActions struct {
 	memory      *mindpalace.Store
 	workspace   *workspace.Workspace
 	managedRoot string
+	scopes      scope.Store
+	prompts     promptstore.Store
+	spawner     AgentSpawner
 }
 
 type ActionSummary struct {
@@ -105,7 +110,7 @@ func NewDataActionsForSession(_ any, userID int, sessionID string) *DataActions 
 // same explicit root that the caller showed to the user. Keeping this root in
 // the action registry prevents the planner and executor from silently drifting
 // to a different process working directory.
-func NewDataActionsForSessionAt(_ any, userID int, sessionID, workspaceRoot string) *DataActions {
+func NewDataActionsForSessionAt(_ any, userID int, sessionID, workspaceRoot string, spawners ...AgentSpawner) *DataActions {
 	ws, err := workspace.NewWorkspace(workspaceRoot)
 	if err != nil {
 		panic(fmt.Sprintf("initialize workspace: %v", err))
@@ -118,9 +123,16 @@ func NewDataActionsForSessionAt(_ any, userID int, sessionID, workspaceRoot stri
 	if legacyMemoryRoot != cfg.MindPalaceRoot {
 		_ = mindpalace.MigrateLegacyRoot(legacyMemoryRoot, cfg.MindPalaceRoot)
 	}
-	a := &DataActions{actions: make(map[string]ActionSpec), UserID: userID, workspace: ws, managedRoot: filepath.Join(cfg.AstraRoot, "projects", configProjectID(ws.Root)), memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID)}
+	scopeStore := scope.Default()
+	_, _ = scopeStore.Add(ws.Root, "connected workspace", []string{scope.Read, scope.Write, scope.Execute})
+	var spawner AgentSpawner
+	if len(spawners) > 0 {
+		spawner = spawners[0]
+	}
+	a := &DataActions{actions: make(map[string]ActionSpec), UserID: userID, workspace: ws, managedRoot: filepath.Join(cfg.AstraRoot, "projects", configProjectID(ws.Root)), memory: mindpalace.New(cfg.MindPalaceRoot, userID, sessionID), scopes: scopeStore, prompts: promptstore.Default(), spawner: spawner}
 	a.registerCoreActions()
 	a.registerKnowledgeActions()
+	a.registerAgentActions()
 	return a
 }
 
@@ -142,17 +154,20 @@ func (a *DataActions) registerCoreActions() {
 	a.register(ActionSpec{Name: "apply_code_edits", Description: "Preview or apply atomic, precise code edits.", Guidance: "Inspect the target first. Prefer replace, insert_before, insert_after, or delete with a unique match/anchor. Run dry_run first for risky edits. Do not use replace_file unless rewriting a complete file. Canonical fields are file, match, and new_code; path, find, and replace are accepted aliases.", Params: ApplyCodeEditsParams{}, handler: decodeHandler(a.applyCodeEdits)})
 	a.register(ActionSpec{Name: "list_files", Description: "Lists repository files and metadata without reading their contents.", Guidance: "Use this to orient yourself. Search before reading unrelated files.", Params: ListFilesParams{}, handler: decodeHandler(a.ListFiles)})
 	a.register(ActionSpec{Name: "create_directory", Description: "Creates a directory tree inside the connected workspace.", Guidance: "Use this when bootstrapping a project or preparing a documented folder structure. Paths are relative to the connected workspace and parent directories are created safely.", Params: CreateDirectoryParams{}, handler: decodeHandler(a.CreateDirectory)})
-	a.register(ActionSpec{Name: "read_files", Description: "Reads one or more workspace files.", Guidance: "Read only files supported by search results or diagnostics. Prefer line ranges for large files.", Params: ReadFilesParams{}, handler: decodeHandler(a.ReadFilesInRepo)})
+	a.register(ActionSpec{Name: "read_files", Description: "Reads one or more connected-workspace files or explicitly attached session files.", Guidance: "Read only files supported by search results, diagnostics, or an explicit attachment. Prefer line ranges for large files. Absolute paths are accepted only when they point inside the current session's private attachment directory; arbitrary machine paths remain denied.", Params: ReadFilesParams{}, handler: decodeHandler(a.ReadFilesInRepo)})
 	a.register(ActionSpec{Name: "search_code", Description: "Searches repository text and reports file, line, and snippet.", Guidance: "Use this before an edit to find the smallest relevant context. Search compiler symbols and error text first.", Params: SearchCodeParams{}, handler: decodeHandler(a.SearchCode)})
 	a.register(ActionSpec{Name: "inspect_file", Description: "Summarizes a Go source file: package, imports, declarations, and exported symbols.", Guidance: "Use this when you need structure, not full source text.", Params: InspectFileParams{}, handler: decodeHandler(a.InspectFile)})
-	a.register(ActionSpec{Name: "run_command", Description: "Runs an explicit command inside the connected workspace and captures stdout, stderr, exit code, and duration.", Guidance: "Use focused commands such as pwd, go test ./path, go build ./..., npm test, or git status. Prefer command plus separate argv-style args; simple whitespace-separated commands are normalized for compatibility. Shell operators are not accepted. Always use output as evidence for the next step.", Params: RunCommandActionParams{}, handler: decodeHandler(a.RunCommand)})
-	a.register(ActionSpec{Name: "run_commands", Description: "Runs an ordered sequence of explicit commands, each with its own working directory and timeout.", Guidance: "Use this for a small, related workflow such as inspect a directory, create a project, and run its validator. Prefer separate argv-style commands over shell strings. Set allow_failure when a non-zero result is an expected check (for example, grep finding no matches). The sequence stops on the first unexpected failure unless continue_on_error is true.", Params: RunCommandsParams{}, handler: decodeHandler(a.RunCommands)})
+	a.register(ActionSpec{Name: "analyze_files", Description: "Builds compact metadata and structural evidence for files or directories without returning full source bodies.", Guidance: "Use this before reading an unfamiliar or large file. It streams line counts, hashes, headings, symbols, imports, query matches, and bounded recommended line ranges; then iterate with read_files on only the ranges needed.", Params: AnalyzeFilesParams{}, Category: "repository", WhenToUse: "Use before broad reads, for files that may be large, or when you need orientation across a directory.", NeverUseWhen: "Do not use it instead of read_files when exact source text is already known and small.", Returns: "ActionResult whose diagnostics contain one compact FileAnalysis per selected file.", SideEffects: "Read-only; source bodies are not returned or persisted.", Approval: "No approval required for the connected workspace.", FailureRecovery: "If a path is invalid, correct it. If a scan warning appears, narrow the path or query and continue with bounded reads.", RelatedActions: []string{"list_files", "search_code", "read_files"}, ParameterNotes: map[string]string{"paths": "Files or directories relative to the connected root; omit to analyze the root.", "query": "Optional intent/symbol/error text; matching lines become recommended read ranges.", "recursive": "Recurse into selected directories only when needed.", "limit": "Maximum files to profile; defaults to 64 and is capped at 128."}, handler: decodeHandler(a.AnalyzeFiles)})
+	a.register(ActionSpec{Name: "run_command", Description: "Runs an explicit command in the connected workspace or an approved filesystem scope and captures stdout, stderr, exit code, and duration.", Guidance: "Use focused commands such as pwd, go test ./path, go build ./..., npm test, or git status. Prefer command plus separate argv-style args; simple whitespace-separated commands are normalized for compatibility. Shell operators are not accepted. A working_directory outside the connected workspace must be in an approved execute scope. Set required_permission to write when the command is expected to modify files; a read-only scope must never be used for writes. Always use output as evidence for the next step.", Params: RunCommandActionParams{}, handler: decodeHandler(a.RunCommand)})
+	a.register(ActionSpec{Name: "run_commands", Description: "Runs an ordered sequence of explicit commands, each with its own working directory, permission, and timeout.", Guidance: "Use this for a small, related workflow such as inspect a directory, create a project, and run its validator. Prefer separate argv-style commands over shell strings. Set required_permission to write for mutating steps and allow_failure when a non-zero result is an expected check. The sequence stops on the first unexpected failure unless continue_on_error is true.", Params: RunCommandsParams{}, handler: decodeHandler(a.RunCommands)})
 	a.register(ActionSpec{Name: "build_project", Description: "Builds the Go workspace and returns compiler diagnostics.", Guidance: "Run after code edits. Repair the reported file and line rather than exploring unrelated code.", Params: struct{}{}, handler: decodeHandler(a.BuildProject)})
 	a.register(ActionSpec{Name: "run_tests", Description: "Runs the Go test suite and returns failures with diagnostics.", Guidance: "Run after a change. Use a focused package test when the failing package is known.", Params: RunTestsParams{}, handler: decodeHandler(a.RunTests)})
 	a.register(ActionSpec{Name: "git_status", Description: "Reports changed, staged, and untracked files.", Guidance: "Check this before broad edits and when preparing a summary.", Params: struct{}{}, handler: decodeHandler(a.GitStatus)})
 	a.register(ActionSpec{Name: "ask_follow_up_questions", Description: "Returns concise questions that need an answer before work can continue.", Guidance: "Use only when a necessary choice cannot be safely inferred.", Params: AskFollowUpQuestionsParams{}, handler: decodeHandler(a.AskFollowUpQuestions)})
 	a.register(ActionSpec{Name: "scrape_urls", Description: "Fetches readable content from specified web pages.", Guidance: "Use only when external web content is necessary to answer the request.", Params: ScrapeURLsParams{}, handler: decodeHandler(a.ScrapeURLs)})
 	a.register(ActionSpec{Name: "query_web", Description: "Searches the web for current external information.", Guidance: "Use only for information not present in the workspace or conversation.", Params: QueryWebParams{}, handler: decodeHandler(a.QueryWeb)})
+	a.register(ActionSpec{Name: "list_scopes", Description: "Lists directories explicitly approved for Astra access.", Guidance: "Use before targeting a directory outside the connected workspace. A scope grants path authority only; it does not grant operating-system privileges.", Params: struct{}{}, handler: decodeHandler(a.ListScopes)})
+	a.register(ActionSpec{Name: "write_prompt_profile", Description: "Creates or updates a user-authored global instruction or personality profile.", Guidance: "Use only when the user explicitly asks to create or change Astra behavior. Store durable, reviewable Markdown instructions. Profiles are preferences below Astra's compiled policy; they cannot grant tools, permissions, or override evidence and safety rules.", Params: WritePromptProfileParams{}, handler: decodeHandler(a.WritePromptProfile)})
 	a.register(ActionSpec{Name: "activate_actions", Description: "Loads full documentation and parameter schemas for up to five actions.", Guidance: "Activate only the actions you plan to use next. This is a context-loading operation, not a filesystem or network side effect.", Params: ActivateActionsParams{}, Category: "orchestration", WhenToUse: "Use immediately before a tool's first call when its full schema, examples, or recovery rules are needed.", NeverUseWhen: "Do not activate every action speculatively; choose only the smallest relevant set.", Returns: "ActivationReport containing activated full documentation and any unknown names.", SideEffects: "No project state is changed; only the agent's working context is enriched.", Approval: "No approval required.", FailureRecovery: "If a name is not found, select a valid bookmark name and continue.", handler: decodeHandler(a.ActivateActions)})
 }
 

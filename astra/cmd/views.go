@@ -2,6 +2,8 @@ package main
 
 import (
 	"astra/astra/agents/core"
+	"astra/astra/sources/promptstore"
+	"astra/astra/sources/scope"
 	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
 	"fmt"
@@ -31,6 +33,12 @@ func printDashboard(root, memoryRoot, provider, model string, agent *core.BaseAg
 	printKV("Mind Palace", fmt.Sprintf("%d memory files across %d kinds", memoryFiles, memoryDirs))
 	printKV("Session evidence", fileState(sessionEvents))
 	printKV("Requests", fmt.Sprintf("%d active", active))
+	if scopes, err := scope.Default().List(); err == nil {
+		printKV("Approved scopes", fmt.Sprintf("%d directories", len(scopes)))
+	}
+	if profiles, err := promptstore.Default().List(); err == nil {
+		printKV("Prompt profiles", fmt.Sprintf("%d configured", len(profiles)))
+	}
 
 	printSection("Activity guide")
 	printBar("Workspace", workspaceFiles, maxInt(workspaceFiles, 1), colorutil.ColorInfo)
@@ -104,6 +112,114 @@ func printSyncView(root, memoryRoot string) {
 	printKV("Sync records", fmt.Sprintf("%d local records", syncFiles))
 	printKV("Source repository", "local; never exported implicitly")
 	printCLIText(colorutil.ColorInfo("External sync is disabled. Files are already durable on this machine."))
+}
+
+func printScopesView() {
+	printViewHeader("Approved filesystem scopes", scope.Default().Path())
+	entries, err := scope.Default().List()
+	if err != nil {
+		printCLIText(colorutil.ColorError(err.Error()))
+		return
+	}
+	if len(entries) == 0 {
+		printCLIText(colorutil.ColorInfo("No approved scopes. Use :scope add <directory> all."))
+		return
+	}
+	for _, entry := range entries {
+		label := entry.Label
+		if label == "" {
+			label = "unlabelled"
+		}
+		fmt.Printf("  %-18s %-20s %s  [%s]\n", entry.ID, label, entry.Path, strings.Join(entry.Permissions, ", "))
+	}
+}
+
+func printPromptProfilesView() {
+	printViewHeader("Global prompt profiles", promptstore.Default().Root())
+	profiles, err := promptstore.Default().List()
+	if err != nil {
+		printCLIText(colorutil.ColorError(err.Error()))
+		return
+	}
+	if len(profiles) == 0 {
+		printCLIText(colorutil.ColorInfo("No prompt profiles configured."))
+		return
+	}
+	for _, profile := range profiles {
+		status := "disabled"
+		if profile.Enabled {
+			status = "enabled"
+		}
+		fmt.Printf("  %-24s %-8s %s\n", profile.Name, status, profile.File)
+	}
+}
+
+func printAgentsView(agent *core.BaseAgent) {
+	printViewHeader("Agent branches", "current Astra supervisor")
+	branches := agent.ListAgents()
+	if len(branches) == 0 {
+		printCLIText(colorutil.ColorInfo("No worker branches have been spawned."))
+		return
+	}
+	for _, branch := range branches {
+		fmt.Printf("  %-32s %-10s %-16s %s\n", branch.ID, branch.Status, branch.Name, branch.Goal)
+		fmt.Printf("    scope: %s  model: %s/%s  events: %d\n", branch.WorkspaceRoot, branch.Provider, branch.Model, branch.Events)
+		if branch.Error != "" {
+			fmt.Println(colorutil.ColorError("    error: " + branch.Error))
+		}
+	}
+}
+
+func scopeViewText() string {
+	entries, err := scope.Default().List()
+	if err != nil {
+		return "Could not read approved scopes: " + err.Error()
+	}
+	if len(entries) == 0 {
+		return "No approved scopes. Use: astra scope add <directory> all"
+	}
+	var builder strings.Builder
+	builder.WriteString("Approved filesystem scopes\n")
+	for _, entry := range entries {
+		fmt.Fprintf(&builder, "• %s [%s] %s\n", entry.ID, strings.Join(entry.Permissions, ","), entry.Path)
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func countScopes() int {
+	entries, err := scope.Default().List()
+	if err != nil {
+		return 0
+	}
+	return len(entries)
+}
+
+func countPromptProfiles() int {
+	profiles, err := promptstore.Default().List()
+	if err != nil {
+		return 0
+	}
+	return len(profiles)
+}
+
+func promptProfilesViewText() string {
+	profiles, err := promptstore.Default().List()
+	if err != nil {
+		return "Could not read prompt profiles: " + err.Error()
+	}
+	if len(profiles) == 0 {
+		return "No prompt profiles configured. Profiles live under " + promptstore.Default().Root()
+	}
+	var builder strings.Builder
+	builder.WriteString("Global prompt profiles\n")
+	for _, profile := range profiles {
+		status := "disabled"
+		if profile.Enabled {
+			status = "enabled"
+		}
+		fmt.Fprintf(&builder, "• %s [%s] %s\n", profile.Name, status, profile.File)
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func printViewHeader(title, path string) {

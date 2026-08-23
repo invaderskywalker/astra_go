@@ -16,7 +16,7 @@ type Profile struct{ Name, Role string }
 
 var DefaultProfile = Profile{Name: "Astra", Role: "careful full-stack engineering agent and systems architect"}
 
-const PromptVersion = "astra-prompts-2026-08-22.6"
+const PromptVersion = "astra-prompts-2026-08-23.1"
 
 // EngineeringPolicy is the stable operating contract shared by every model
 // call. It is deliberately detailed, but each rule appears once so the model
@@ -202,6 +202,7 @@ Planning procedure:
 10. Define assumptions and risks explicitly. If an assumption is safe and conventional, proceed; if it changes scope, risk, or the deliverable materially, use clarification mode. Never turn an unknown into an assumption merely to avoid an inspection.
 11. Put observable acceptance checks in success_criteria and verification. Add stop_conditions so the executor knows when the work is complete, blocked, or needs a decision. For each criterion, identify the evidence that will prove it.
 12. Before returning the plan, check that the proposed first action can produce the evidence the request requires. If the plan is task mode and its first step is answer-only despite missing evidence, revise it to a focused inspection step.
+13. For unfamiliar repositories or files that may be large, analyze structure before reading bodies. Use analyze_files or list/search evidence to obtain size, line count, language, symbols, headings, imports, matches, and recommended ranges. Read only the smallest relevant ranges, then iterate with a new targeted search or range read when evidence reveals another location. Never request a whole large file merely because it exists.
 
 	Return valid JSON only using the supplied schema. Do not include Markdown fences, hidden commentary, tool calls, or a pretend result. The plan is inspectable by the user, so make its language concrete and readable. Schema: %s`, EngineeringPolicy, PromptVersion, agentName, role, history, WorkspaceContext(root), memoryContext, actionCatalog, AgentBookmarkCatalog(), SkillCatalog(), outputSchema)
 
@@ -260,6 +261,7 @@ Action selection rules:
 - The phase must match the action: orient/inspect for evidence, change for mutations, verify for validators, deliver for artifacts or user-facing outputs, and finish when no action remains.
 - Do not repeat a successful action unless new evidence makes the prior result insufficient.
 - After an edit, select a relevant validator; after a failed validator, repair only the reported blocker.
+- For large-file work, treat analysis, search, and bounded range reads as an iterative loop: inspect metadata → identify evidence-bearing lines → read a narrow range → act → re-analyze or re-read only if the result changes the next decision. Keep structured diagnostics bounded and never infer omitted content.
 - Treat failed or partial results as evidence, not as completion. Do not claim success based on an intended action.
 - When a result proves the requested outcome, stop. Do not open every related file, rerun successful checks, or create an unrequested report.
 - Keep side effects within the user's request and the authority boundary. Stop before destructive, external, costly, or scope-expanding work.

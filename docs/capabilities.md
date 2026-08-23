@@ -26,7 +26,7 @@ and available actions—is injected into the prompts instead of being guessed.
 | Capability | Current behavior | Evidence/output | Primary implementation |
 | --- | --- | --- | --- |
 | Conversation | Answers questions and explains concepts without pretending tools ran | User-facing response | `astra/agents/prompts` and `BaseAgent` |
-| Workspace orientation | Lists files, creates directory trees, searches text, reads bounded files, and inspects Go structure | Paths, line ranges, snippets, diagnostics | `astra/agents/workspace`, `astra/agents/actions` |
+| Workspace orientation | Lists files, creates directory trees, searches text, analyzes file metadata/structure, reads bounded files, and inspects Go structure | Paths, sizes, hashes, line counts, headings, symbols, matches, recommended ranges, snippets, diagnostics | `astra/agents/workspace`, `astra/agents/actions` |
 | Code delivery | Applies precise edits, then can build/test | Changed files plus validator output | `astra/agents/actions/edits.go`, `engineering.go` |
 | Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output; expected non-zero checks can be marked | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
 | Web research | Searches current external information and scrapes supplied URLs when needed | Source URLs and extracted content | `astra/agents/actions/scraping_action.go` |
@@ -39,6 +39,9 @@ and available actions—is injected into the prompts instead of being guessed.
 | Self-improvement | Qwen can scan for one bounded proposal; Luna can review; human approves | Reviewable proposal file | `astra/agents/improvements` |
 | Action bookmarks | Every action has a compact bookmark; the executor activates full documentation for the next one to five tools and records fallback activation when needed | Bookmark catalog, activation report, action activation event | `astra/agents/actions/action_registry.go`, `astra/agents/prompts` |
 | Agent bookmarks | Main agent can route a request through role-oriented capability groupings without granting hidden permissions | Agent bookmark catalog in planning context | `astra/agents/prompts/agents.go` |
+| Filesystem scopes | Stores explicit read/write/execute approvals for additional directories and re-checks command working directories at runtime | Private scope registry and denied/approved command evidence | `astra/sources/scope`, `astra/agents/actions/scopes.go` |
+| Worker agents | Supervisor can spawn bounded goal-oriented branches, wait for results, stop workers, and expose lifecycle metadata | Branch IDs, statuses, goals, models, event counts, and outputs | `astra/agents/core/supervisor.go`, `astra/agents/actions/agents.go` |
+| Prompt/personality profiles | Stores enabled user-authored Markdown profiles globally and injects them as lower-priority preferences | Profile files, index, enabled/disabled status | `astra/sources/promptstore`, `astra/agents/actions/prompt_profiles.go` |
 
 ## Scope and authority
 
@@ -79,6 +82,11 @@ context.
   criteria drive the minimum action set, negative claims require supporting
   checks, task mode cannot finish without required evidence, and clarification
   is reserved for material unresolved decisions.
+- Large-file analysis is progressive: `analyze_files` streams metadata and
+  structural signals without returning source bodies; `search_code` locates
+  evidence; `read_files` streams only requested line ranges. Results are
+  context-bounded, so Astra can iterate over different parts of a file without
+  exhausting the model window.
 
 This layered design keeps prompts substantial and reviewable without hiding
 behavior in small YAML fragments or silently changing the agent at runtime.

@@ -8,6 +8,8 @@ import (
 	"astra/astra/evals"
 	"astra/astra/services/llm"
 	"astra/astra/sources/identity"
+	"astra/astra/sources/promptstore"
+	"astra/astra/sources/scope"
 	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
 	"astra/astra/utils/logging"
@@ -76,6 +78,14 @@ func main() {
 		printModels(ctx)
 		return
 	}
+	if len(args) >= 1 && args[0] == "scope" {
+		runScope(args[1:])
+		return
+	}
+	if len(args) >= 1 && args[0] == "prompt" {
+		runPrompt(args[1:])
+		return
+	}
 	if len(args) >= 1 && args[0] == "connect" {
 		connectFlags := flag.NewFlagSet("connect", flag.ExitOnError)
 		provider := connectFlags.String("provider", llm.DefaultProvider(), "LLM provider: ollama or openai")
@@ -108,11 +118,15 @@ func main() {
 			fmt.Println("Astra is locked: " + err.Error())
 			return
 		}
+		if _, scopeErr := scope.Default().Add(dirPath, "connected workspace", []string{scope.Read, scope.Write, scope.Execute}); scopeErr != nil {
+			logging.ErrorLogger.Warn("could not register connected workspace scope", zap.Error(scopeErr))
+		}
 
 		// --- Initialize agent ---
 		sessionID := fmt.Sprintf("cli-%s", uuid.New().String())
 		agentName := "astra"
-		agent := core.NewBaseAgentWithWorkspace(identity.LocalUserID, sessionID, agentName, nil, *provider, *model, dirPath)
+		supervisor := core.NewSupervisor(identity.LocalUserID, dirPath, *provider, *model)
+		agent := core.NewBaseAgentWithWorkspace(identity.LocalUserID, sessionID, agentName, supervisor, *provider, *model, dirPath)
 		if _, manifestErr := state.EnsureSession(dirPath, identity.LocalUserID, sessionID, *provider, *model); manifestErr != nil {
 			logging.ErrorLogger.Warn("could not write session manifest", zap.Error(manifestErr))
 		}
@@ -418,6 +432,101 @@ func printModels(ctx context.Context) {
 	}
 }
 
+func runScope(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: astra scope list | add <directory> [read,write,execute] | revoke <scope-id-or-path>")
+		return
+	}
+	store := scope.Default()
+	switch args[0] {
+	case "list":
+		entries, err := store.List()
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not read scopes: " + err.Error()))
+			return
+		}
+		if len(entries) == 0 {
+			fmt.Println(colorutil.ColorInfo("No approved scopes."))
+			return
+		}
+		for _, entry := range entries {
+			label := entry.Label
+			if label == "" {
+				label = "unlabelled"
+			}
+			fmt.Printf("%s  %-12s %-12s %s\n", entry.ID, strings.Join(entry.Permissions, ","), label, entry.Path)
+		}
+	case "add":
+		if len(args) < 2 {
+			fmt.Println("Usage: astra scope add <directory> [read,write,execute]")
+			return
+		}
+		permissions := []string{scope.Read, scope.Execute}
+		if len(args) > 2 {
+			permissions = strings.Split(args[2], ",")
+		}
+		entry, err := store.Add(args[1], "", permissions)
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not add scope: " + err.Error()))
+			return
+		}
+		fmt.Printf(colorutil.ColorFinalSuccess("Approved scope %s: %s (%s)\n"), entry.ID, entry.Path, strings.Join(entry.Permissions, ", "))
+	case "revoke":
+		if len(args) != 2 {
+			fmt.Println("Usage: astra scope revoke <scope-id-or-path>")
+			return
+		}
+		entry, err := store.Revoke(args[1])
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not revoke scope: " + err.Error()))
+			return
+		}
+		fmt.Println(colorutil.ColorFinalSuccess("Revoked scope: " + entry.Path))
+	default:
+		fmt.Println("Usage: astra scope list | add <directory> [read,write,execute] | revoke <scope-id-or-path>")
+	}
+}
+
+func runPrompt(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: astra prompt list | enable <profile-id> | disable <profile-id>")
+		return
+	}
+	store := promptstore.Default()
+	switch args[0] {
+	case "list":
+		profiles, err := store.List()
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not read prompt profiles: " + err.Error()))
+			return
+		}
+		if len(profiles) == 0 {
+			fmt.Println(colorutil.ColorInfo("No prompt profiles configured."))
+			return
+		}
+		for _, profile := range profiles {
+			status := "disabled"
+			if profile.Enabled {
+				status = "enabled"
+			}
+			fmt.Printf("%-28s %-8s %s\n", profile.ID, status, profile.Name)
+		}
+	case "enable", "disable":
+		if len(args) != 2 {
+			fmt.Println("Usage: astra prompt enable|disable <profile-id>")
+			return
+		}
+		profile, err := store.SetEnabled(args[1], args[0] == "enable")
+		if err != nil {
+			fmt.Println(colorutil.ColorError("Could not update prompt profile: " + err.Error()))
+			return
+		}
+		fmt.Printf(colorutil.ColorFinalSuccess("Prompt profile %s: %s\n"), args[0], profile.Name)
+	default:
+		fmt.Println("Usage: astra prompt list | enable <profile-id> | disable <profile-id>")
+	}
+}
+
 func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, active int, roots ...string) (bool, string, string) {
 	if !strings.HasPrefix(line, ":") {
 		return false, provider, model
@@ -430,8 +539,8 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 	}
 	switch command {
 	case "help":
-		fmt.Println(colorutil.ColorInfo("Views: :chat, :dashboard, :workspace, :mindpalace, :sessions, :sync"))
-		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :pause, :resume, :stop, :clear, :help, :quit"))
+		fmt.Println(colorutil.ColorInfo("Views: :chat, :dashboard, :workspace, :mindpalace, :sessions, :sync, :agents, :scopes, :prompts"))
+		fmt.Println(colorutil.ColorInfo("Local commands: :pwd, :ls [path], :tree [path], :attach <file>, :paste/:endpaste, :model, :scope list|add|revoke, :pause, :resume, :stop, :clear, :help, :quit"))
 	case "chat":
 		printCLIText(colorutil.ColorPrompt("Chat mode active. Type a request or use :dashboard, :workspace, :mindpalace, :sessions, or :sync."))
 	case "dashboard":
@@ -444,6 +553,14 @@ func handleCLICommand(line, dir, provider, model string, agent *core.BaseAgent, 
 		printSessionsView(dir, memoryRoot, agent.UserID)
 	case "sync":
 		printSyncView(dir, memoryRoot)
+	case "scopes":
+		printScopesView()
+	case "scope":
+		runScope(parts[1:])
+	case "prompts", "prompt":
+		printPromptProfilesView()
+	case "agents", "branches":
+		printAgentsView(agent)
 	case "pwd":
 		fmt.Println(dir)
 	case "model":

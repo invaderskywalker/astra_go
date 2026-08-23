@@ -30,6 +30,7 @@ const (
 	tabMindPalace
 	tabSessions
 	tabSync
+	tabAgents
 )
 
 var tuiTabs = []struct {
@@ -42,6 +43,7 @@ var tuiTabs = []struct {
 	{"Mind Palace", "✦"},
 	{"Sessions", "◷"},
 	{"Sync", "⇄"},
+	{"Agents", "✣"},
 }
 
 type tuiEventMsg struct {
@@ -220,7 +222,7 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
 		}
-	case "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6":
+	case "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7":
 		m.tab = tuiTab(int(key[len(key)-1] - '1'))
 		m.status = tuiTabs[m.tab].name
 		m.refreshViewport()
@@ -295,6 +297,15 @@ func (m *tuiModel) handleLocalCommand(query string) {
 	case "sync":
 		m.tab = tabSync
 		m.status = "Sync"
+	case "agents", "branches":
+		m.tab = tabAgents
+		m.status = "Agents"
+	case "scopes":
+		m.entries = append(m.entries, tuiEntry{kind: "info", text: scopeViewText()})
+		m.status = "Approved scopes"
+	case "prompts", "prompt":
+		m.entries = append(m.entries, tuiEntry{kind: "info", text: promptProfilesViewText()})
+		m.status = "Prompt profiles"
 	case "model":
 		if len(parts) != 3 {
 			m.entries = append(m.entries, tuiEntry{kind: "question", text: "Usage: :model <ollama|openai> <model>"})
@@ -342,8 +353,10 @@ func (m *tuiModel) handleLocalCommand(query string) {
 		} else {
 			m.entries = append(m.entries, tuiEntry{kind: "status", text: "Attached: " + target})
 		}
+	case "scope":
+		m.entries = append(m.entries, tuiEntry{kind: "info", text: "Use the shell command `astra scope add|list|revoke`; :scopes displays the current approved roots."})
 	case "help":
-		m.entries = append(m.entries, tuiEntry{kind: "info", text: ":dashboard :workspace :mindpalace :sessions :sync :model :pause :resume :stop :clear :attach :pwd :quit"})
+		m.entries = append(m.entries, tuiEntry{kind: "info", text: ":dashboard :workspace :mindpalace :sessions :sync :agents :scopes :prompts :model :pause :resume :stop :clear :attach :pwd :quit"})
 	case "quit", "exit":
 		m.quitting = true
 		return
@@ -499,6 +512,8 @@ func (m *tuiModel) viewTab() string {
 		return m.sessionsView()
 	case tabSync:
 		return m.syncView()
+	case tabAgents:
+		return m.agentsView()
 	default:
 		return ""
 	}
@@ -519,6 +534,9 @@ func (m *tuiModel) dashboardView() string {
 		tuiMetric("Attachments", fmt.Sprintf("%d files", attachmentFiles)),
 		tuiMetric("Mind Palace", fmt.Sprintf("%d memory files  ·  %d knowledge kinds", memoryFiles, memoryDirs)),
 		tuiMetric("Requests", fmt.Sprintf("%d active", len(m.active))),
+		tuiMetric("Worker branches", fmt.Sprintf("%d known", len(m.agent.ListAgents()))),
+		tuiMetric("Approved scopes", fmt.Sprintf("%d directories", countScopes())),
+		tuiMetric("Prompt profiles", fmt.Sprintf("%d configured", countPromptProfiles())),
 		"",
 		tuiStyleSection.Render("ACTIVITY"),
 		tuiBar("Workspace", workspaceFiles, maxTUI(workspaceFiles, 1), tuiColorCyan),
@@ -530,8 +548,42 @@ func (m *tuiModel) dashboardView() string {
 		"  • User Mind Palace survives sessions",
 		"  • Session workspace is visible and local-first",
 		"  • Managed artifacts can sync; source code never uploads implicitly",
+		"  • :scopes and :prompts show global configuration",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *tuiModel) agentsView() string {
+	lines := []string{tuiStyleTitle.Render("AGENT BRANCHES"), "Worker agents spawned by Astra, with independent goals and session evidence.", ""}
+	summaries := m.agent.ListAgents()
+	if len(summaries) == 0 {
+		return strings.Join(append(lines, tuiStyleMuted.Render("No worker branches yet.")), "\n")
+	}
+	for _, summary := range summaries {
+		lines = append(lines,
+			fmt.Sprintf("  %s  %s  %s", statusIcon(summary.Status), summary.ID, summary.Status),
+			fmt.Sprintf("      %s · %s/%s", summary.Name, summary.Provider, summary.Model),
+			fmt.Sprintf("      Goal: %s", tuiWrap(summary.Goal, maxTUI(40, m.width-20))),
+			fmt.Sprintf("      Scope: %s · events: %d", summary.WorkspaceRoot, summary.Events),
+		)
+		if summary.Error != "" {
+			lines = append(lines, "      Error: "+summary.Error)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func statusIcon(status string) string {
+	switch status {
+	case "completed":
+		return "✓"
+	case "failed":
+		return "✗"
+	case "stopped":
+		return "■"
+	default:
+		return "•"
+	}
 }
 
 func (m *tuiModel) workspaceView() string {

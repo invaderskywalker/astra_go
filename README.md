@@ -15,7 +15,7 @@ Check the installed CLI version:
 
 ```sh
 astra --version
-# Astra CLI v0.5.0
+# Astra CLI v0.6.0
 ```
 
 Show locally installed Ollama models plus the supported OpenAI options:
@@ -99,6 +99,9 @@ clear the draft, and `Ctrl-C` to cancel the draft.
 :mindpalace                   Browse the durable user Mind Palace
 :sessions                     Browse session evidence files
 :sync                         Show managed-file synchronization configuration/status
+:agents                       Show worker-agent branches and their status
+:scopes                       Show approved filesystem scopes
+:prompts                      Show global instruction/personality profiles
 :pause                       Pause at the next safe agent checkpoint
 :resume                      Resume a paused agent
 :stop                        Cancel the active request safely
@@ -117,10 +120,56 @@ JSONL file. Commands can target nested project directories with
 `working_directory`; use `run_commands` when several related commands should
 run in order.
 
+For unfamiliar or potentially large files, Astra uses a progressive evidence
+loop. `analyze_files` streams file size, line count, language, hash, headings,
+symbols, imports, query matches, and recommended line ranges without returning
+the source body. It then uses `search_code` and bounded `read_files` ranges,
+iterating only when new evidence requires another part of the file. This keeps
+large repositories useful without filling the model context window.
+
 Explicitly attached files and very large single-line pastes are copied into the
 private Astra data directory for the current project/session, outside the
 repository, and passed to Astra by reference. This keeps source trees clean
 while preserving traceability.
+
+## Approved filesystem scopes
+
+The connected project is automatically approved. Additional directories are
+never silently assumed; explicitly grant a scope from the shell:
+
+```sh
+astra scope add /Users/me/another-project all
+astra scope add /Users/me/read-only-project read,execute
+astra scope list
+astra scope revoke scope_<id>
+```
+
+The agent can run commands in an approved scope by providing its exact
+`working_directory`. Every command re-checks the scope and permission at
+execution time. Scope approval is Astra's authority record; it does not elevate
+the operating-system user's permissions.
+
+## Worker agents and profiles
+
+Astra has a bounded supervisor/worker runtime. The main agent can spawn focused
+workers for research, implementation, testing, or documentation, wait for their
+results, and reconcile their evidence. Each branch has its own session ID,
+goal, model, personality, workspace scope, event trail, and lifecycle status.
+The cockpit exposes these branches through the Agents view and `:agents`.
+
+User-authored instruction and personality profiles are global Markdown files
+under `~/.astra/prompts/` (or `$ASTRA_DATA_DIR/prompts/`). The agent can create
+them with the `write_prompt_profile` action, and they can be inspected with:
+
+```sh
+astra prompt list
+astra prompt enable prompt_<name>
+astra prompt disable prompt_<name>
+```
+
+Enabled profiles are preferences loaded into planning and execution context;
+they cannot override Astra's compiled policy, evidence rules, permissions, or
+tool contracts.
 
 Set persistent CLI defaults with:
 
