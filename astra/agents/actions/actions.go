@@ -30,6 +30,7 @@ type DataActions struct {
 	scopes      scope.Store
 	prompts     promptstore.Store
 	spawner     AgentSpawner
+	runID       string
 }
 
 type ActionSummary struct {
@@ -231,8 +232,21 @@ func (a *DataActions) ActionDocumentation(names []string) ([]ActionDocumentation
 }
 
 func (a *DataActions) RecordSessionEvent(eventType string, payload any) {
+	if a.runID != "" {
+		// Keep the user mind-palace session stream queryable while also making
+		// every event self-describing when several runs are interleaved.
+		payload = map[string]any{"run_id": a.runID, "session_id": a.memory.SessionID(), "data": payload}
+		_ = state.AppendRunEvent(a.workspace.Root, a.memory.SessionID(), a.runID, eventType, payload)
+	}
 	_, _ = a.memory.AppendSessionEvent(context.Background(), eventType, payload)
 }
+
+// SetRunID binds subsequent action evidence and artifacts to one top-level
+// request. The worker is serialized, so changing this at run boundaries is
+// deterministic and does not mix concurrently executing runs.
+func (a *DataActions) SetRunID(runID string) { a.runID = strings.TrimSpace(runID) }
+
+func (a *DataActions) RunID() string { return a.runID }
 
 // ExecuteAction never exposes reflection or arbitrary return values to callers.
 func (a *DataActions) ExecuteAction(name string, params map[string]any) (result *ActionResult, err error) {

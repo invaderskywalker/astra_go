@@ -15,10 +15,11 @@ import (
 type ChatMessage struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
+	RunID     string    `json:"run_id,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func AppendChatMessage(root, sessionID, role, content string) error {
+func AppendChatMessage(root, sessionID, role, content string, runIDs ...string) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
@@ -31,7 +32,11 @@ func AppendChatMessage(root, sessionID, role, content string) error {
 		return err
 	}
 	defer file.Close()
-	data, err := json.Marshal(ChatMessage{Role: role, Content: content, Timestamp: time.Now().UTC()})
+	runID := ""
+	if len(runIDs) > 0 {
+		runID = strings.TrimSpace(runIDs[0])
+	}
+	data, err := json.Marshal(ChatMessage{Role: role, Content: content, RunID: runID, Timestamp: time.Now().UTC()})
 	if err != nil {
 		return err
 	}
@@ -56,7 +61,11 @@ func ReadChatHistory(root, sessionID string) ([]map[string]string, error) {
 		if json.Unmarshal(scanner.Bytes(), &message) != nil || strings.TrimSpace(message.Content) == "" {
 			continue
 		}
-		result = append(result, map[string]string{"role": message.Role, "content": message.Content})
+		entry := map[string]string{"role": message.Role, "content": message.Content}
+		if message.RunID != "" {
+			entry["run_id"] = message.RunID
+		}
+		result = append(result, entry)
 	}
 	return result, scanner.Err()
 }

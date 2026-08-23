@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -41,11 +42,13 @@ type BaseAgent struct {
 	TenantID         int
 	UserID           int
 	LLM              llm.LLMClient
+	Provider         string
 	Model            string
 	ExecutionPlans   []map[string]interface{}
 	TaskState        map[string]interface{}
 	taskMemory       string
 	SessionID        string
+	RunID            string
 	WorkspaceRoot    string
 	LogInfo          map[string]interface{}
 	dataActions      *actions.DataActions
@@ -54,15 +57,23 @@ type BaseAgent struct {
 	stepCh           chan map[string]interface{}
 	responseCh       chan string
 	queryQueue       chan queuedQuery
+	runUpdates       chan runUpdate
 	mu               sync.Mutex
 	controlMu        sync.Mutex
 	controlCond      *sync.Cond
 	paused           bool
 	running          bool
+	acceptingUpdates bool
 	cancelCurrent    context.CancelFunc
 }
 
 type queuedQuery struct {
+	runID string
+	query string
+	out   chan string
+}
+
+type runUpdate struct {
 	query string
 	out   chan string
 }
@@ -95,13 +106,16 @@ func NewBaseAgentWithWorkspace(userID int, sessionID string, agentName string, r
 		TenantID:         userID,
 		UserID:           userID,
 		LLM:              llm.NewClient(provider),
+		Provider:         provider,
 		Model:            model,
 		SessionID:        sessionID,
+		RunID:            "",
 		WorkspaceRoot:    ws.Root,
 		LogInfo:          map[string]interface{}{"tenant_id": userID, "user_id": userID, "session_id": sessionID},
 		stepCh:           make(chan map[string]interface{}, 10),
 		responseCh:       make(chan string, 10),
 		queryQueue:       make(chan queuedQuery, 32),
+		runUpdates:       make(chan runUpdate, 32),
 		dataActions:      actions.NewDataActionsForSessionAt(nil, userID, sessionID, ws.Root, spawner),
 		spawner:          spawner,
 		activatedActions: make(map[string]bool),
@@ -162,6 +176,7 @@ func (a *BaseAgent) beginRun() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.controlMu.Lock()
 	a.running = true
+	a.acceptingUpdates = true
 	a.cancelCurrent = cancel
 	a.controlMu.Unlock()
 	return ctx, cancel
@@ -170,6 +185,7 @@ func (a *BaseAgent) beginRun() (context.Context, context.CancelFunc) {
 func (a *BaseAgent) endRun() {
 	a.controlMu.Lock()
 	a.running = false
+	a.acceptingUpdates = false
 	a.cancelCurrent = nil
 	a.controlCond.Broadcast()
 	a.controlMu.Unlock()
@@ -205,13 +221,13 @@ func (a *BaseAgent) SetModel(provider, model string) error {
 	if model == "" {
 		return fmt.Errorf("model is required")
 	}
-	a.LLM, a.Model = llm.NewClient(provider), model
+	a.LLM, a.Provider, a.Model = llm.NewClient(provider), provider, model
 	return nil
 }
 
 func (a *BaseAgent) processQueue() {
 	for request := range a.queryQueue {
-		a.runQuery(request.query, request.out)
+		a.runQuery(request.runID, request.query, request.out)
 		close(request.out)
 	}
 }
@@ -355,14 +371,67 @@ func (a *BaseAgent) promptWorkspaceContext() string {
 // ProcessQuery queues work and returns immediately. A single worker preserves
 // agent state ordering while allowing the CLI/UI to keep accepting input.
 func (a *BaseAgent) ProcessQuery(query string) <-chan string {
+	_, ch := a.ProcessQueryWithRun(query)
+	return ch
+}
+
+// ProcessQueryWithRun submits a top-level message. The first message opens a
+// run; messages received while that run is active are updates to the same run
+// rather than unrelated queued tasks. The returned channel for an update only
+// acknowledges attachment; the active run's stream remains the authoritative
+// output stream.
+func (a *BaseAgent) ProcessQueryWithRun(query string) (string, <-chan string) {
 	ch := make(chan string, 32)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		close(ch)
+		return "", ch
+	}
+	a.controlMu.Lock()
+	activeRun := a.RunID
+	accepting := a.acceptingUpdates
+	a.controlMu.Unlock()
+	if activeRun != "" && accepting {
+		select {
+		case a.runUpdates <- runUpdate{query: query, out: ch}:
+			ch <- a.formatEventForRun("run_update_queued", map[string]interface{}{"run_id": activeRun, "message": "Added to the active run; Astra will reassess it at the next checkpoint."}, activeRun)
+			close(ch)
+		case <-time.After(250 * time.Millisecond):
+			ch <- a.formatEventForRun("error", map[string]interface{}{"message": "The active run update queue is full; try again shortly.", "run_id": activeRun}, activeRun)
+			close(ch)
+		}
+		return activeRun, ch
+	}
+	runID := "run-" + uuid.New().String()
+	// Reserve the ID before enqueueing so a very fast worker cannot finish and
+	// clear the run before the caller records its identity.
+	reserve := activeRun == ""
+	if reserve {
+		a.controlMu.Lock()
+		if a.RunID == "" {
+			a.RunID = runID
+			a.acceptingUpdates = true
+		} else {
+			reserve = false
+		}
+		a.controlMu.Unlock()
+	}
 	select {
-	case a.queryQueue <- queuedQuery{query: query, out: ch}:
+	case a.queryQueue <- queuedQuery{runID: runID, query: query, out: ch}:
 	case <-time.After(250 * time.Millisecond):
+		if reserve {
+			a.controlMu.Lock()
+			if a.RunID == runID {
+				a.RunID = ""
+				a.acceptingUpdates = false
+			}
+			a.controlMu.Unlock()
+		}
 		ch <- a.formatEvent("error", map[string]interface{}{"message": "Astra's request queue is full; try again shortly."})
 		close(ch)
+		return "", ch
 	}
-	return ch
+	return runID, ch
 }
 
 // ClearPending discards requests that have not reached the single worker yet.
@@ -380,10 +449,37 @@ func (a *BaseAgent) ClearPending() int {
 	}
 }
 
-func (a *BaseAgent) runQuery(query string, ch chan string) {
+func (a *BaseAgent) runQuery(runID, query string, ch chan string) {
+	a.controlMu.Lock()
+	a.RunID = runID
+	a.controlMu.Unlock()
+	a.mu.Lock()
+	a.LogInfo["run_id"] = runID
+	a.mu.Unlock()
+	a.dataActions.SetRunID(runID)
+	_, _ = state.EnsureRun(a.WorkspaceRoot, a.UserID, a.SessionID, runID, query, a.Provider, a.Model)
+	runStatus := "completed"
 	ctx, cancel := a.beginRun()
 	defer cancel()
-	defer a.endRun()
+	defer func() {
+		if ctx.Err() != nil {
+			runStatus = "stopped"
+		}
+		if status, _ := a.TaskState["status"].(string); status == "blocked" {
+			runStatus = "blocked"
+		}
+		_ = state.CloseRun(a.WorkspaceRoot, a.SessionID, runID, runStatus)
+		a.dataActions.SetRunID("")
+		a.controlMu.Lock()
+		if a.RunID == runID {
+			a.RunID = ""
+		}
+		a.controlMu.Unlock()
+		a.mu.Lock()
+		delete(a.LogInfo, "run_id")
+		a.mu.Unlock()
+		a.endRun()
+	}()
 	if !a.checkpoint(ctx, ch) {
 		a.stopped(ch)
 		return
@@ -407,6 +503,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		"verification_status": "pending",
 		"artifacts":           []interface{}{},
 		"next_action":         "Understand the request and select the first evidence-producing action.",
+		"user_updates":        []interface{}{},
 	}
 	a.activatedActions = make(map[string]bool)
 	a.storeState("user_query", query)
@@ -423,6 +520,7 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	stalledTurns := 0
 	previousFailure := ""
 	repeatedFailures := 0
+	accessFailures := 0
 	watchdog := func(action string, result map[string]interface{}) bool {
 		currentProgress := progressSignature(a.TaskState, action, result)
 		if currentProgress == previousProgress {
@@ -459,6 +557,10 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			a.stopped(ch)
 			return
 		}
+		if a.drainRunUpdates(&query, ch) {
+			stepIndex++
+			continue
+		}
 		if stepIndex == 1 {
 			a.status(ch, "Understanding your request")
 		} else {
@@ -493,7 +595,37 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			shouldContinue = sc
 		}
 		if !shouldContinue {
-			break
+			fullPlan := map[string]interface{}{
+				"task_state":      a.TaskState,
+				"execution_plans": a.ExecutionPlans,
+			}
+			a.storeState("full_plan", fullPlan)
+			// Generate the user-facing response only after execution evidence is ready.
+			a.status(ch, "Preparing answer")
+			if !a.streamResponse(ctx, query, map[string]interface{}{"task_state": a.TaskState, "steps": results}, ch) {
+				return
+			}
+			if a.drainRunUpdates(&query, ch) {
+				stepIndex++
+				// A message arrived while the response was being prepared. Re-enter
+				// the living task loop so it is assessed in this same run.
+				continue
+			}
+			// Close intake before announcing completion. An update that won the
+			// race before this boundary is drained once more; later input opens a
+			// new queued run instead of being lost.
+			a.controlMu.Lock()
+			a.acceptingUpdates = false
+			a.controlMu.Unlock()
+			if a.drainRunUpdates(&query, ch) {
+				stepIndex++
+				a.controlMu.Lock()
+				a.acceptingUpdates = true
+				a.controlMu.Unlock()
+				continue
+			}
+			ch <- a.formatEvent("completed", map[string]interface{}{"message": "Process completed successfully", "steps": len(a.ExecutionPlans)})
+			return
 		}
 		var planToExec map[string]interface{} = expanded
 		step, ok := expanded["next_step"].(map[string]interface{})
@@ -615,6 +747,21 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			"executed_plan": planToExec,
 			"result":        summarizeExecutionResult(execRes),
 		})
+		if isAccessFailure(actionSummary) {
+			accessFailures++
+		} else if actionSucceeded(actionSummary) {
+			accessFailures = 0
+		}
+		if accessFailures >= 2 {
+			reason := "the operating system denied access to the connected workspace twice; repository inspection cannot continue until filesystem permissions are restored"
+			a.TaskState["status"] = "blocked"
+			a.TaskState["blockers"] = []interface{}{reason}
+			a.TaskState["next_action"] = "Restore read access for Astra/your terminal, reconnect the workspace, and ask Astra to retry."
+			a.TaskState["verification_status"] = "failed"
+			a.storeState("task_state", a.TaskState)
+			ch <- a.formatEvent("access_blocked", map[string]interface{}{"message": reason, "next": "Restore filesystem access and reconnect the workspace."})
+			return
+		}
 		if watchdog(actionName, actionSummary) {
 			return
 		}
@@ -630,14 +777,74 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 		ch <- a.formatEvent("error", map[string]interface{}{"message": message, "next": "Ask Astra to continue from the recorded evidence."})
 		return
 	}
-	fullPlan := map[string]interface{}{
-		"task_state":      a.TaskState,
-		"execution_plans": a.ExecutionPlans,
+}
+
+func isAccessFailure(value interface{}) bool {
+	switch typed := value.(type) {
+	case string:
+		text := strings.ToLower(typed)
+		return strings.Contains(text, "operation not permitted") || strings.Contains(text, "permission denied") || strings.Contains(text, "access denied")
+	case map[string]interface{}:
+		for _, item := range typed {
+			if isAccessFailure(item) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if isAccessFailure(item) {
+				return true
+			}
+		}
 	}
-	a.storeState("full_plan", fullPlan)
-	// Generate the user-facing response only after execution evidence is ready.
-	a.status(ch, "Preparing answer")
-	a.streamResponse(ctx, query, map[string]interface{}{"task_state": a.TaskState, "steps": results}, ch)
+	return false
+}
+
+func actionSucceeded(value interface{}) bool {
+	if entries, ok := value.(map[string]interface{}); ok {
+		for key, item := range entries {
+			if key == "success" {
+				if success, ok := item.(bool); ok {
+					return success
+				}
+			}
+			if actionSucceeded(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// drainRunUpdates folds messages submitted while the current run was active
+// into the same living task. It deliberately preserves each update as a
+// separate evidence record while exposing the latest message to the planner.
+func (a *BaseAgent) drainRunUpdates(query *string, ch chan<- string) bool {
+	updated := false
+	for {
+		select {
+		case update := <-a.runUpdates:
+			if strings.TrimSpace(update.query) == "" {
+				continue
+			}
+			if *query != "" {
+				*query += "\n\nUser update during this run:\n" + update.query
+			} else {
+				*query = update.query
+			}
+			updates, _ := a.TaskState["user_updates"].([]interface{})
+			updates = append(updates, map[string]interface{}{"text": update.query, "received_at": time.Now().UTC().Format(time.RFC3339)})
+			a.TaskState["user_updates"] = updates
+			a.TaskState["latest_user_input"] = update.query
+			a.TaskState["status"] = "in_progress"
+			_ = state.AppendRunUpdate(a.WorkspaceRoot, a.SessionID, a.RunID, update.query)
+			a.storeState("user_update", map[string]interface{}{"text": update.query})
+			ch <- a.formatEvent("run_update", map[string]interface{}{"message": "New input added to the active run; reassessing.", "text": update.query})
+			updated = true
+		default:
+			return updated
+		}
+	}
 }
 
 func mergeTaskState(current, updated map[string]interface{}) map[string]interface{} {
@@ -712,14 +919,14 @@ func repeatedFailureSignature(action string, result map[string]interface{}) stri
 	return ""
 }
 
-func (a *BaseAgent) streamResponse(ctx context.Context, query string, results map[string]interface{}, ch chan<- string) {
+func (a *BaseAgent) streamResponse(ctx context.Context, query string, results map[string]interface{}, ch chan<- string) bool {
 	respReq := a.buildResponseReq(results, query)
 	respCh, err := a.LLM.RunStream(ctx, respReq)
 	if err != nil {
 		ch <- a.formatEvent("error", map[string]interface{}{
 			"message": "failed to stream response", "error": err.Error(),
 		})
-		return
+		return false
 	}
 	resp := ""
 	var utf8Buf string
@@ -727,7 +934,7 @@ func (a *BaseAgent) streamResponse(ctx context.Context, query string, results ma
 	for chunk := range respCh {
 		if !a.checkpoint(ctx, ch) {
 			a.stopped(ch)
-			return
+			return false
 		}
 		resp += chunk
 		utf8Buf += chunk
@@ -754,10 +961,7 @@ func (a *BaseAgent) streamResponse(ctx context.Context, query string, results ma
 		}
 	}
 	a.storeState("response", resp)
-	ch <- a.formatEvent("completed", map[string]interface{}{
-		"message": "Process completed successfully",
-		"steps":   len(a.ExecutionPlans),
-	})
+	return true
 }
 
 func (a *BaseAgent) executePlan(plan map[string]interface{}) (results map[string]interface{}) {
@@ -1039,7 +1243,7 @@ func (a *BaseAgent) storeState(key string, value interface{}) {
 		return
 	}
 	content := string(contentBytes)
-	if err := state.AppendChatMessage(a.WorkspaceRoot, a.SessionID, key, content); err != nil {
+	if err := state.AppendChatMessage(a.WorkspaceRoot, a.SessionID, key, content, a.RunID); err != nil {
 		logging.ErrorLogger.Error("Failed to save file-backed session message", zap.String("key", key), zap.Error(err))
 	}
 }
@@ -1053,9 +1257,14 @@ func (a *BaseAgent) getHistory() []map[string]string {
 }
 
 func (a *BaseAgent) formatEvent(eventType string, payload interface{}) string {
+	return a.formatEventForRun(eventType, payload, a.RunID)
+}
+
+func (a *BaseAgent) formatEventForRun(eventType string, payload interface{}, runID string) string {
 	env := map[string]interface{}{
 		"agent_name": a.Name,
 		"session_id": a.SessionID,
+		"run_id":     runID,
 		"type":       eventType,
 		"payload":    payload,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),

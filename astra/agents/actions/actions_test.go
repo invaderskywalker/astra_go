@@ -74,6 +74,23 @@ func TestReadFilesAllowsCurrentSessionArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunScopedArtifactUsesRunRootAndSyncRecord(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	registry := NewDataActionsForSessionAt(nil, 1, "run-artifact-test", project)
+	registry.SetRunID("run-one")
+	written := registry.WriteArtifact(WriteArtifactParams{Title: "assessment", Format: "markdown", Content: "# Assessment\n\nverified"})
+	if !written.Success || len(written.Artifacts) != 1 {
+		t.Fatalf("artifact write failed: %#v", written)
+	}
+	if filepath.Dir(written.Artifacts[0]) != state.RunArtifactsRoot(project, "run-artifact-test", "run-one") {
+		t.Fatalf("artifact was not scoped to run root: %s", written.Artifacts[0])
+	}
+	if _, err := os.Stat(filepath.Join(state.RunSyncRoot(project, "run-artifact-test", "run-one"), "assessment-md.json")); err != nil {
+		t.Fatalf("run sync record missing: %v", err)
+	}
+}
+
 func TestAnalyzeFilesReturnsStructureAndRanges(t *testing.T) {
 	project := t.TempDir()
 	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))

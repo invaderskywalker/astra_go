@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,36 @@ func TestEnsureSessionMigratesLegacyArtifactAndSyncRoots(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(SessionSyncRoot(root, sessionID), "report.json")); err != nil {
 		t.Fatalf("legacy sync record was not migrated: %v", err)
+	}
+}
+
+func TestEnsureRunCreatesSessionChildAndRunEvidencePath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(root, "astra-data"))
+	if _, err := EnsureSession(root, 7, "cli-test", "openai", "gpt-5.6-luna"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := EnsureRun(root, 7, "cli-test", "run-test", "inspect the repository", "openai", "gpt-5.6-luna")
+	if err != nil || run.RunID != "run-test" || run.SessionID != "cli-test" || run.Status != "active" {
+		t.Fatalf("run manifest failed: %#v / %v", run, err)
+	}
+	if _, err := os.Stat(RunManifestPath(root, "cli-test", "run-test")); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendRunEvent(root, "cli-test", "run-test", "user_query", map[string]string{"text": "inspect"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendRunUpdate(root, "cli-test", "run-test", "also check tests"); err != nil {
+		t.Fatal(err)
+	}
+	updatedData, err := os.ReadFile(RunManifestPath(root, "cli-test", "run-test"))
+	if err != nil || !strings.Contains(string(updatedData), "also check tests") {
+		t.Fatalf("run update was not persisted: %v", err)
+	}
+	if _, err := os.Stat(RunEventsPath(root, "cli-test", "run-test")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloseRun(root, "cli-test", "run-test", "completed"); err != nil {
+		t.Fatal(err)
 	}
 }

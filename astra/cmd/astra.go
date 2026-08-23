@@ -118,6 +118,9 @@ func main() {
 			fmt.Println("Astra is locked: " + err.Error())
 			return
 		}
+		if !ensureWorkspaceAccess(dirPath) {
+			return
+		}
 		if _, scopeErr := scope.Default().Add(dirPath, "connected workspace", []string{scope.Read, scope.Write, scope.Execute}); scopeErr != nil {
 			logging.ErrorLogger.Warn("could not register connected workspace scope", zap.Error(scopeErr))
 		}
@@ -181,7 +184,8 @@ func main() {
 			if len(line) > 12000 {
 				line = saveLargePaste(dirPath, sessionID, line)
 			}
-			id, outputCh := nextID, agent.ProcessQuery(line)
+			id := nextID
+			runID, outputCh := agent.ProcessQueryWithRun(line)
 			nextID++
 			active++
 			go func(id int, outputCh <-chan string) {
@@ -190,7 +194,11 @@ func main() {
 				}
 				eventCh <- outputEvent{id: id, done: true}
 			}(id, outputCh)
-			fmt.Print(fmt.Sprintf(colorutil.ColorInfo("Queued request #%d (you can continue typing).\r\n"), id))
+			if runID != "" {
+				fmt.Print(fmt.Sprintf(colorutil.ColorInfo("Request #%d · run %s (you can continue typing).\r\n"), id, shortRunID(runID)))
+			} else {
+				fmt.Print(fmt.Sprintf(colorutil.ColorInfo("Queued request #%d (you can continue typing).\r\n"), id))
+			}
 		}
 		for inputCh != nil || active > 0 {
 			cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(inputCh)}}
@@ -788,6 +796,21 @@ func printCLIEvent(message string) {
 				printCLIText(colorutil.ColorInfo("  Next: " + next))
 			}
 		}
+	case "access_blocked":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorError("Access blocked: " + text))
+			}
+			if next, ok := payload["next"].(string); ok && strings.TrimSpace(next) != "" {
+				printCLIText(colorutil.ColorInfo("  Next: " + next))
+			}
+		}
+	case "run_update", "run_update_queued":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorInfo("↳ " + text))
+			}
+		}
 	case "paused":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
@@ -822,6 +845,14 @@ func printCLIEvent(message string) {
 			}
 		}
 	}
+}
+
+func shortRunID(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if len(runID) <= 19 {
+		return runID
+	}
+	return runID[:19] + "…"
 }
 
 func normalizeTerminalText(text string) string {

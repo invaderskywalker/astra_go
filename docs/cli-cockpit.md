@@ -22,10 +22,13 @@ bounded at the same 12,000-character limit as the plain CLI. The transcript
 keeps user messages, plans, activated tool documentation, action parameters,
 action results, errors, and the final streamed response visually distinct.
 
-Requests may run concurrently. Each request owns its own stream buffer; a
-finished response is committed as one assistant entry instead of emitting a
-new terminal line for every token. This is what prevents the interleaving seen
-in the older prompt-plus-ANSI implementation.
+The CLI remains responsive while Astra works. Each session contains durable
+runs. The first submitted message opens a run and receives a stable `run_id`;
+messages typed while that run is active are appended as `user_update` records
+to the same run and reassessed at the next safe checkpoint. A new run starts
+only after the active run finishes. Every stream event carries both
+`session_id` and `run_id`, so output remains traceable without interleaving
+unrelated tasks.
 
 ## Controls
 
@@ -50,6 +53,22 @@ Colon commands remain available in Chat: `:model`, `:dashboard`, `:workspace`,
 for CI, shell pipes, transcript capture, and debugging terminal capability
 problems. It retains the multiline editor, bracketed paste, history, queue,
 and streaming event renderer.
+
+## Workspace access preflight
+
+Before creating a session, `astra connect` performs a small read-only check of
+the connected directory. If macOS denies access with `operation not permitted`,
+Astra does not start an agent or create a misleading run. It shows a recovery
+screen with:
+
+- `o` — open macOS Privacy & Security settings;
+- `r` — retry after the user grants access; or
+- `q` — exit without starting the session.
+
+The Astra scope registry and macOS privacy permissions are separate. The
+registry records which paths Astra is authorized to target; it cannot grant
+Full Disk Access to the process that launched the CLI. Non-interactive runs
+report the blocker and exit so automation cannot hang waiting for input.
 
 ## Storage and authority
 

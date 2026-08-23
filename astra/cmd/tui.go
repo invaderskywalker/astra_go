@@ -74,6 +74,7 @@ type tuiModel struct {
 	streams  map[int]string
 	active   map[int]bool
 	outputs  map[int]<-chan string
+	runs     map[int]string
 	nextID   int
 	status   string
 	quitting bool
@@ -98,7 +99,7 @@ func newTUIModel(agent *core.BaseAgent, root, memoryRoot, provider, model string
 	vp := viewport.New(80, 20)
 	m := &tuiModel{
 		agent: agent, root: root, memoryRoot: memoryRoot, provider: provider, model: model,
-		tab: tabChat, input: ta, viewport: vp, streams: map[int]string{}, active: map[int]bool{}, nextID: 1,
+		tab: tabChat, input: ta, viewport: vp, streams: map[int]string{}, active: map[int]bool{}, runs: map[int]string{}, nextID: 1,
 		status: "Ready", width: 100, height: 30, outputs: map[int]<-chan string{},
 	}
 	m.refreshViewport()
@@ -263,11 +264,20 @@ func (m *tuiModel) submit() tea.Cmd {
 	id := m.nextID
 	m.nextID++
 	m.active[id] = true
-	m.entries = append(m.entries, tuiEntry{kind: "user", text: query})
 	m.input.Reset()
-	m.status = fmt.Sprintf("Working on request #%d…", id)
+	runID, output := m.agent.ProcessQueryWithRun(query)
+	m.runs[id] = runID
+	label := query
+	if runID != "" {
+		label = fmt.Sprintf("[%s] %s", shortRunID(runID), query)
+	}
+	m.entries = append(m.entries, tuiEntry{kind: "user", text: label})
+	runLabel := shortRunID(runID)
+	if runLabel == "" {
+		runLabel = "queued"
+	}
+	m.status = fmt.Sprintf("Working on request #%d · %s…", id, runLabel)
 	m.refreshViewport()
-	output := m.agent.ProcessQuery(query)
 	m.outputs[id] = output
 	return readTUIEvent(output, id)
 }
@@ -385,6 +395,7 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 		return
 	}
 	typ, _ := event["type"].(string)
+	runID, _ := event["run_id"].(string)
 	payload, _ := event["payload"].(map[string]interface{})
 	switch typ {
 	case "response_chunk":
@@ -397,7 +408,11 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 			m.entries = append(m.entries, tuiEntry{kind: "status", text: text})
 		}
 	case "plan":
-		m.entries = append(m.entries, tuiEntry{kind: "plan", text: formatTUIPlan(payload)})
+		text := formatTUIPlan(payload)
+		if runID != "" {
+			text = "Run " + shortRunID(runID) + "\n" + text
+		}
+		m.entries = append(m.entries, tuiEntry{kind: "plan", text: text})
 		m.status = "Plan ready"
 	case "action_activation":
 		if names := tuiStrings(payload, "actions"); len(names) > 0 {
@@ -409,6 +424,8 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 		}
 	case "action_result":
 		m.entries = append(m.entries, tuiEntry{kind: "tool", text: formatTUIActionResult(payload)})
+	case "run_update", "run_update_queued":
+		m.entries = append(m.entries, tuiEntry{kind: "status", text: tuiString(payload, "message")})
 	case "needs_input":
 		text := tuiString(payload, "message")
 		if questions := tuiStrings(payload, "questions"); len(questions) > 0 {
@@ -417,6 +434,8 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 		m.entries = append(m.entries, tuiEntry{kind: "question", text: strings.TrimSpace(text)})
 	case "error":
 		m.entries = append(m.entries, tuiEntry{kind: "error", text: tuiString(payload, "message")})
+	case "access_blocked":
+		m.entries = append(m.entries, tuiEntry{kind: "error", text: tuiString(payload, "message") + "\n" + tuiString(payload, "next")})
 	case "watchdog":
 		m.entries = append(m.entries, tuiEntry{kind: "paused", text: tuiString(payload, "message") + "\n" + tuiString(payload, "next")})
 	case "paused", "stopped", "completed":
@@ -523,7 +542,7 @@ func (m *tuiModel) viewTab() string {
 
 func (m *tuiModel) dashboardView() string {
 	workspaceFiles, workspaceDirs := countFiles(m.root)
-	artifactFiles, _ := countFiles(state.SessionArtifactsRoot(m.root, m.agent.SessionID))
+	artifactFiles, _ := sessionArtifactCount(m.root, m.agent.SessionID)
 	attachmentFiles, _ := countFiles(state.SessionAttachmentsRoot(m.root, m.agent.SessionID))
 	memoryFiles, memoryDirs := countFiles(filepath.Join(m.memoryRoot, "users", fmt.Sprintf("%d", m.agent.UserID), "memory"))
 	lines := []string{
@@ -612,7 +631,7 @@ func (m *tuiModel) fileView(title, root, description string) string {
 
 func (m *tuiModel) sessionsView() string {
 	project := filepath.Join(state.ProjectDataRoot(m.root), "sessions")
-	lines := []string{tuiStyleTitle.Render("SESSIONS"), "Every session has a local manifest and durable evidence trail.", "", tuiStyleMuted.Render(project), ""}
+	lines := []string{tuiStyleTitle.Render("SESSIONS"), "Every session has a local manifest; each top-level request is a durable run.", "", tuiStyleMuted.Render(project), ""}
 	entries, _ := os.ReadDir(project)
 	if len(entries) == 0 {
 		return strings.Join(append(lines, tuiStyleMuted.Render("No session manifests yet.")), "\n")
@@ -621,7 +640,15 @@ func (m *tuiModel) sessionsView() string {
 		if !entry.IsDir() {
 			continue
 		}
-		lines = append(lines, "  ◷  "+entry.Name()+"  "+fileState(filepath.Join(project, entry.Name(), "manifest.json")))
+		sessionRoot := filepath.Join(project, entry.Name())
+		lines = append(lines, "  ◷  "+entry.Name()+"  "+fileState(filepath.Join(sessionRoot, "manifest.json")))
+		if runs, runErr := os.ReadDir(filepath.Join(sessionRoot, "runs")); runErr == nil {
+			for _, run := range runs {
+				if run.IsDir() {
+					lines = append(lines, "      ↳ run "+runDisplayID(filepath.Join(sessionRoot, "runs", run.Name(), "manifest.json"), run.Name())+"  "+fileState(filepath.Join(sessionRoot, "runs", run.Name(), "manifest.json")))
+				}
+			}
+		}
 	}
 	return strings.Join(lines, "\n")
 }

@@ -92,7 +92,7 @@ func (s *Supervisor) SpawnAgent(ctx context.Context, request actions.SpawnAgentR
 	s.mu.Unlock()
 	_, _ = state.EnsureSession(root, s.userID, sessionID, provider, model)
 
-	output := agent.ProcessQuery(goal)
+	_, output := agent.ProcessQueryWithRun(goal)
 	go s.collectBranch(id, output, root, sessionID)
 	return actions.SpawnAgentResult{Summary: s.summary(id)}, nil
 }

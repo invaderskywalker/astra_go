@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMergeTaskStateKeepsPriorEvidenceAndAppliesUpdates(t *testing.T) {
 	current := map[string]interface{}{
@@ -73,5 +76,45 @@ func TestProgressSignatureIgnoresVolatileResultFields(t *testing.T) {
 	}}
 	if progressSignature(state, "list_files", first) != progressSignature(state, "list_files", second) {
 		t.Fatal("volatile result fields changed the progress signature")
+	}
+}
+
+func TestQueriesSubmittedDuringActiveRunShareRunID(t *testing.T) {
+	agent := &BaseAgent{
+		queryQueue: make(chan queuedQuery, 2),
+		runUpdates: make(chan runUpdate, 2),
+	}
+	firstRun, _ := agent.ProcessQueryWithRun("first task")
+	secondRun, secondOutput := agent.ProcessQueryWithRun("additional requirement")
+	if firstRun == "" || firstRun != secondRun {
+		t.Fatalf("queries did not share run ID: first=%q second=%q", firstRun, secondRun)
+	}
+	if len(agent.queryQueue) != 1 || len(agent.runUpdates) != 1 {
+		t.Fatalf("unexpected routing: queued=%d updates=%d", len(agent.queryQueue), len(agent.runUpdates))
+	}
+	if _, ok := <-secondOutput; !ok {
+		t.Fatal("update acknowledgement channel closed without an event")
+	}
+	if _, ok := <-secondOutput; ok {
+		t.Fatal("update acknowledgement channel should close after one event")
+	}
+	agent.RunID = firstRun
+	if event := agent.formatEvent("status", map[string]string{"message": "working"}); event == "" || !strings.Contains(event, `"run_id":"`+firstRun+`"`) {
+		t.Fatalf("event did not carry run ID: %s", event)
+	}
+}
+
+func TestAccessFailureDetectionRecognizesNestedPermissionErrors(t *testing.T) {
+	result := map[string]interface{}{
+		"list_files": map[string]interface{}{
+			"success": false,
+			"error":   "open workspace: operation not permitted",
+		},
+	}
+	if !isAccessFailure(result) {
+		t.Fatal("nested operation-not-permitted error was not classified as an access failure")
+	}
+	if isAccessFailure(map[string]interface{}{"success": true, "summary": "listed files"}) {
+		t.Fatal("successful action was classified as an access failure")
 	}
 }

@@ -15,7 +15,20 @@ Check the installed CLI version:
 
 ```sh
 astra --version
-# Astra CLI v0.6.0
+# Astra CLI v0.8.3
+```
+
+CLI versions use Semantic Versioning: bump the patch number for compatible
+fixes, the minor number for new backward-compatible capabilities, and the
+major number for breaking changes. The release version is maintained in
+`astra/config/version.go`; update `PromptVersion` in
+`astra/agents/prompts/prompts.go` whenever the model behavior contract changes.
+Build and verify with:
+
+```sh
+go test ./...
+go build -o astra_cli ./astra/cmd
+./astra_cli --version
 ```
 
 Show locally installed Ollama models plus the supported OpenAI options:
@@ -62,6 +75,11 @@ separate regions so long prompts and streaming output cannot overwrite each
 other. The left rail contains Chat, Dashboard, Workspace, Mind Palace,
 Sessions, and Sync. Use `Ctrl+1` through `Ctrl+6` for direct navigation, or
 `Tab`/`Shift+Tab` to move between views.
+
+Before starting a session, Astra performs a read-only workspace access
+preflight. If macOS protects the directory, the CLI offers to open Privacy &
+Security, retry, or exit; it never starts a run that cannot inspect its
+workspace.
 
 The Chat composer grows for multiline prompts. Press `Enter` to send and
 `Ctrl-J` to insert a newline. `Ctrl+P` pauses at a safe checkpoint, `Ctrl+R`
@@ -292,6 +310,7 @@ agent work never contacts a remote mirror.
 ```text
 users/{user_id}/
   sessions/{session_id}/events.jsonl     # immutable session evidence
+  sessions/{session_id}/runs/{run_id}/   # one top-level request and its evidence
   memory/{kind}/{memory_id}.md           # curated, linked memory blocks
   memory/index.json                       # retrieval index
 ```

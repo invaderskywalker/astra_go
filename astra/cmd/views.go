@@ -6,6 +6,7 @@ import (
 	"astra/astra/sources/scope"
 	"astra/astra/sources/state"
 	colorutil "astra/astra/utils/color"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 // persisted by the runtime.
 func printDashboard(root, memoryRoot, provider, model string, agent *core.BaseAgent, active int) {
 	workspaceFiles, workspaceDirs := countFiles(root)
-	artifactFiles, _ := countFiles(state.SessionArtifactsRoot(root, agent.SessionID))
+	artifactFiles, _ := sessionArtifactCount(root, agent.SessionID)
 	attachmentFiles, _ := countFiles(state.SessionAttachmentsRoot(root, agent.SessionID))
 	memoryFiles, memoryDirs := countFiles(filepath.Join(memoryRoot, "users", fmt.Sprintf("%d", agent.UserID), "memory"))
 	sessionEvents := filepath.Join(memoryRoot, "users", fmt.Sprintf("%d", agent.UserID), "sessions", safeViewName(agent.SessionID), "events.jsonl")
@@ -76,7 +77,15 @@ func printSessionsView(root, memoryRoot string, userID int) {
 	if entries, err := os.ReadDir(projectSessions); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
-				fmt.Printf("  local %-24s %s\n", entry.Name(), fileState(filepath.Join(projectSessions, entry.Name(), "manifest.json")))
+				sessionRoot := filepath.Join(projectSessions, entry.Name())
+				fmt.Printf("  local %-24s %s\n", entry.Name(), fileState(filepath.Join(sessionRoot, "manifest.json")))
+				if runs, runErr := os.ReadDir(filepath.Join(sessionRoot, "runs")); runErr == nil {
+					for _, run := range runs {
+						if run.IsDir() {
+							fmt.Printf("    run   %-20s %s\n", runDisplayID(filepath.Join(sessionRoot, "runs", run.Name(), "manifest.json"), run.Name()), fileState(filepath.Join(sessionRoot, "runs", run.Name(), "manifest.json")))
+						}
+					}
+				}
 			}
 		}
 	} else if !os.IsNotExist(err) {
@@ -101,6 +110,37 @@ func printSessionsView(root, memoryRoot string, userID int) {
 			fmt.Printf("  %s  %d events\n", entry.Name(), size)
 		}
 	}
+}
+
+func sessionArtifactCount(root, sessionID string) (files, dirs int) {
+	legacyFiles, legacyDirs := countFiles(state.SessionArtifactsRoot(root, sessionID))
+	runRoot := filepath.Join(state.SessionRoot(root, sessionID), "runs")
+	entries, err := os.ReadDir(runRoot)
+	if err != nil {
+		return legacyFiles, legacyDirs
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			runArtifactFiles, runArtifactDirs := countFiles(filepath.Join(runRoot, entry.Name(), "artifacts"))
+			files, dirs = addCounts(files, dirs, runArtifactFiles, runArtifactDirs)
+		}
+	}
+	return legacyFiles + files, legacyDirs + dirs
+}
+
+func runDisplayID(manifestPath, fallback string) string {
+	data, err := os.ReadFile(manifestPath)
+	if err == nil {
+		var manifest state.RunManifest
+		if json.Unmarshal(data, &manifest) == nil && strings.TrimSpace(manifest.RunID) != "" {
+			return shortRunID(manifest.RunID)
+		}
+	}
+	return shortRunID(fallback)
+}
+
+func addCounts(files, dirs int, addFiles, addDirs int) (int, int) {
+	return files + addFiles, dirs + addDirs
 }
 
 func printSyncView(root, memoryRoot string) {

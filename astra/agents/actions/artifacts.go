@@ -37,7 +37,11 @@ func (a *DataActions) WriteArtifact(params WriteArtifactParams) ActionResult {
 	if name == "" {
 		return ActionResult{Success: false, Error: "title must contain letters or numbers"}
 	}
-	path := filepath.Join(state.SessionArtifactsRoot(a.workspace.Root, a.memorySessionID()), name+extension)
+	root := state.SessionArtifactsRoot(a.workspace.Root, a.memorySessionID())
+	if a.RunID() != "" {
+		root = state.RunArtifactsRoot(a.workspace.Root, a.memorySessionID(), a.RunID())
+	}
+	path := filepath.Join(root, name+extension)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return ActionResult{Success: false, Error: fmt.Sprintf("prepare artifact directory: %v", err)}
 	}
@@ -70,7 +74,12 @@ func (a *DataActions) syncManagedFile(path string, data []byte, contentType stri
 	// may copy these managed files elsewhere, but writes never contact a remote
 	// service implicitly.
 	sessionDir := filepath.Base(state.SessionRoot(a.workspace.Root, a.memorySessionID()))
-	key := filepath.ToSlash(filepath.Join("local", "projects", configProjectID(a.workspace.Root), "sessions", sessionDir, "artifacts", filepath.Base(path)))
+	keyParts := []string{"local", "projects", configProjectID(a.workspace.Root), "sessions", sessionDir}
+	if a.RunID() != "" {
+		keyParts = append(keyParts, "runs", filepath.Base(state.RunRoot(a.workspace.Root, a.memorySessionID(), a.RunID())))
+	}
+	keyParts = append(keyParts, "artifacts", filepath.Base(path))
+	key := filepath.ToSlash(filepath.Join(keyParts...))
 	_ = data
 	_ = contentType
 	a.writeSyncRecord(path, key, "local_only", "External sync is disabled by default")
@@ -83,7 +92,11 @@ func (a *DataActions) writeSyncRecord(path, key, status, message string) {
 	if err != nil {
 		return
 	}
-	rel := filepath.Join(state.SessionSyncRoot(a.workspace.Root, a.memorySessionID()), artifactName(filepath.Base(path))+".json")
+	root := state.SessionSyncRoot(a.workspace.Root, a.memorySessionID())
+	if a.RunID() != "" {
+		root = state.RunSyncRoot(a.workspace.Root, a.memorySessionID(), a.RunID())
+	}
+	rel := filepath.Join(root, artifactName(filepath.Base(path))+".json")
 	absolute := filepath.Clean(rel)
 	if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
 		return

@@ -11,19 +11,22 @@ job while sharing one consistent operating policy.
 2. Living task state — records the interpreted request, interaction mode,
    applicable skills, success criteria, evidence, completed and remaining work,
    blockers, verification, and next action.
-3. Execution prompt — reassesses that living state after every result and acts
+3. Run continuity — each top-level message receives a stable `run_id` under
+   its parent session. Messages received while that run is active are recorded
+   as `user_update` entries and must be reassessed by the same task state.
+4. Execution prompt — reassesses that living state after every result and acts
    as a state machine. It selects one registered action at a time, records
    expected evidence, handles failure, and stops at a clear condition.
 4. Response prompt — converts execution evidence into a truthful user handoff.
-5. `skills.go` — reusable competencies. Skills guide judgment; they do not grant
+6. `skills.go` — reusable competencies. Skills guide judgment; they do not grant
    tools or permissions.
-6. Action bookmarks and activation — the executor sees compact capability
+7. Action bookmarks and activation — the executor sees compact capability
    bookmarks. Before a first tool call, `activate_actions` loads the selected
    action's complete prose contract, parameter schema, examples, return shape,
    side effects, approval rule, and failure recovery guidance. Activation is
    limited to five actions per call. The runtime also auto-hydrates a skipped
    activation as a safety fallback and records that event.
-7. Agent bookmarks — role-oriented groupings such as `repository_operator`,
+8. Agent bookmarks — role-oriented groupings such as `repository_operator`,
    `artifact_author`, and `verification_engineer`. These are routing hints,
    not separate permission systems or hidden sub-agents.
 

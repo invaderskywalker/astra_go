@@ -1,8 +1,10 @@
 package logging
 
 import (
+	"astra/astra/config"
 	"context"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
@@ -17,15 +19,33 @@ var (
 	ErrorLogger   *zap.Logger
 )
 
-// ensureLogsDir makes sure the ./logs folder exists
-func ensureLogsDir() {
-	if err := os.MkdirAll("./logs", os.ModePerm); err != nil {
-		panic("Failed to create logs directory: " + err.Error())
+// ensureLogsDir makes sure Astra's private log folder exists. Logs are
+// runtime telemetry, not project artifacts, so they must never be created in
+// the connected repository's ./logs directory.
+func ensureLogsDir() string {
+	logRoot := os.Getenv("ASTRA_LOG_DIR")
+	if logRoot == "" {
+		logRoot = filepath.Join(config.LoadConfig().AstraRoot, "logs")
 	}
+	if err := os.MkdirAll(logRoot, 0700); err != nil {
+		// Logging must never prevent the agent from starting. This fallback is
+		// still outside the connected repository and is useful in restricted
+		// sandboxes or when the user's home directory is temporarily read-only.
+		fallback := filepath.Join(os.TempDir(), "astra-logs")
+		if fallbackErr := os.MkdirAll(fallback, 0700); fallbackErr == nil {
+			logRoot = fallback
+		} else {
+			// The standard temporary directory is expected to be writable on the
+			// supported platforms; if it is not, keep the logger pointed at a
+			// harmless sink rather than panic during CLI startup.
+			return os.TempDir()
+		}
+	}
+	return logRoot
 }
 
 func InitLogger() {
-	ensureLogsDir()
+	logRoot := ensureLogsDir()
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "timestamp"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
@@ -34,7 +54,7 @@ func InitLogger() {
 	// app.log (general logs)
 	appCore := zapcore.NewCore(encoder,
 		zapcore.AddSync(&lumberjack.Logger{
-			Filename: "./logs/app.log", MaxSize: 100, MaxAge: 28, Compress: true,
+			Filename: filepath.Join(logRoot, "app.log"), MaxSize: 100, MaxAge: 28, Compress: true,
 		}),
 		zap.InfoLevel,
 	)
@@ -43,7 +63,7 @@ func InitLogger() {
 	// request.log
 	requestCore := zapcore.NewCore(encoder,
 		zapcore.AddSync(&lumberjack.Logger{
-			Filename: "./logs/request.log", MaxSize: 50, MaxAge: 7, Compress: true,
+			Filename: filepath.Join(logRoot, "request.log"), MaxSize: 50, MaxAge: 7, Compress: true,
 		}),
 		zap.InfoLevel,
 	)
@@ -52,7 +72,7 @@ func InitLogger() {
 	// timer.log
 	timerCore := zapcore.NewCore(encoder,
 		zapcore.AddSync(&lumberjack.Logger{
-			Filename: "./logs/timer.log", MaxSize: 50, MaxAge: 7, Compress: true,
+			Filename: filepath.Join(logRoot, "timer.log"), MaxSize: 50, MaxAge: 7, Compress: true,
 		}),
 		zap.InfoLevel,
 	)
@@ -61,7 +81,7 @@ func InitLogger() {
 	// error.log
 	errorCore := zapcore.NewCore(encoder,
 		zapcore.AddSync(&lumberjack.Logger{
-			Filename: "./logs/error.log", MaxSize: 100, MaxAge: 30, Compress: true,
+			Filename: filepath.Join(logRoot, "error.log"), MaxSize: 100, MaxAge: 30, Compress: true,
 		}),
 		zap.ErrorLevel,
 	)

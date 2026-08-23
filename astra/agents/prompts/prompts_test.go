@@ -8,7 +8,7 @@ import (
 
 func TestPromptIncludesEvidenceAndClarificationGates(t *testing.T) {
 	execution := ExecutionSystem("{\"status\":\"understanding\"}", "{}", "list_files", ExecutionSchema, "/tmp/project", "retrieved memory")
-	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision", "Task completion gate", "living task state", "complete updated task_state", "<retrieved_memory>", "retrieved memory", "Sherlock method", "navigable knowledge graph"} {
+	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision", "Task completion gate", "living task state", "complete updated task_state", "<retrieved_memory>", "retrieved memory", "Sherlock method", "navigable knowledge graph", "run ID", "user updates"} {
 		if !contains(execution, expected) {
 			t.Fatalf("execution prompt missing decision rule %q", expected)
 		}

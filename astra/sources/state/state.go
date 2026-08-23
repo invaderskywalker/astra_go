@@ -38,6 +38,24 @@ type SessionManifest struct {
 	Model           string    `json:"model"`
 }
 
+// RunManifest is the durable identity of one top-level user request inside a
+// session. A run may contain many model/tool turns, but it always has one
+// stable run ID and one parent session ID.
+type RunManifest struct {
+	RunID         string    `json:"run_id"`
+	SessionID     string    `json:"session_id"`
+	UserID        int       `json:"user_id"`
+	ProjectID     string    `json:"project_id"`
+	WorkspaceRoot string    `json:"workspace_root"`
+	Query         string    `json:"query"`
+	Updates       []string  `json:"updates,omitempty"`
+	StartedAt     time.Time `json:"started_at"`
+	LastSeenAt    time.Time `json:"last_seen_at"`
+	Status        string    `json:"status"`
+	Provider      string    `json:"provider"`
+	Model         string    `json:"model"`
+}
+
 // ProjectDataRoot is the Astra-owned storage area for a connected project.
 // It intentionally lives outside the repository so connecting to many
 // directories does not scatter Astra metadata through source trees.
@@ -69,6 +87,28 @@ func SessionAttachmentsRoot(root, sessionID string) string {
 
 func SessionSyncRoot(root, sessionID string) string {
 	return filepath.Join(SessionRoot(root, sessionID), "sync")
+}
+
+// RunRoot keeps per-request state grouped under its parent session. The hash
+// keeps arbitrary user text and UUIDs safe as path components.
+func RunRoot(root, sessionID, runID string) string {
+	return filepath.Join(SessionRoot(root, sessionID), "runs", safe(runID))
+}
+
+func RunManifestPath(root, sessionID, runID string) string {
+	return filepath.Join(RunRoot(root, sessionID, runID), "manifest.json")
+}
+
+func RunEventsPath(root, sessionID, runID string) string {
+	return filepath.Join(RunRoot(root, sessionID, runID), "events.jsonl")
+}
+
+func RunArtifactsRoot(root, sessionID, runID string) string {
+	return filepath.Join(RunRoot(root, sessionID, runID), "artifacts")
+}
+
+func RunSyncRoot(root, sessionID, runID string) string {
+	return filepath.Join(RunRoot(root, sessionID, runID), "sync")
 }
 
 func ProjectID(root string) string {
@@ -164,7 +204,7 @@ func EnsureSession(root string, userID int, sessionID, provider, model string) (
 	}
 	now := time.Now().UTC()
 	if manifest.SessionID == "" {
-		manifest = SessionManifest{SessionID: sessionID, UserID: userID, ProjectID: project.ProjectID, WorkspaceRoot: root, ArtifactsRoot: SessionArtifactsRoot(root, sessionID), AttachmentsRoot: SessionAttachmentsRoot(root, sessionID), StartedAt: now, Status: "active", Provider: provider, Model: model}
+		manifest = SessionManifest{SessionID: sessionID, UserID: userID, ProjectID: project.ProjectID, WorkspaceRoot: root, ArtifactsRoot: SessionArtifactsRoot(root, sessionID), AttachmentsRoot: SessionAttachmentsRoot(root, sessionID), StartedAt: now, LastSeenAt: now, Status: "active", Provider: provider, Model: model}
 	} else {
 		manifest.LastSeenAt = now
 		manifest.Provider, manifest.Model, manifest.Status = provider, model, "active"
@@ -202,6 +242,73 @@ func CloseSession(root string, sessionID string) error {
 		return err
 	}
 	manifest.Status = "closed"
+	manifest.LastSeenAt = time.Now().UTC()
+	return writeJSON(path, manifest)
+}
+
+// EnsureRun creates or refreshes a run manifest without changing the parent
+// session's identity. It is intentionally idempotent so retries and process
+// restarts can safely reopen the same run record.
+func EnsureRun(root string, userID int, sessionID, runID, query, provider, model string) (RunManifest, error) {
+	project, err := EnsureProject(root)
+	if err != nil {
+		return RunManifest{}, err
+	}
+	path := RunManifestPath(root, sessionID, runID)
+	var manifest RunManifest
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		_ = json.Unmarshal(data, &manifest)
+	}
+	now := time.Now().UTC()
+	if manifest.RunID == "" {
+		manifest = RunManifest{RunID: runID, SessionID: sessionID, UserID: userID, ProjectID: project.ProjectID, WorkspaceRoot: root, Query: query, StartedAt: now, Status: "active", Provider: provider, Model: model, Updates: []string{}}
+	} else {
+		manifest.LastSeenAt = now
+		manifest.Status = "active"
+		if strings.TrimSpace(query) != "" {
+			manifest.Query = query
+		}
+		manifest.Provider, manifest.Model = provider, model
+	}
+	if err := writeJSON(path, manifest); err != nil {
+		return RunManifest{}, err
+	}
+	return manifest, nil
+}
+
+func AppendRunUpdate(root, sessionID, runID, update string) error {
+	update = strings.TrimSpace(update)
+	if update == "" {
+		return nil
+	}
+	path := RunManifestPath(root, sessionID, runID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	manifest.Updates = append(manifest.Updates, update)
+	manifest.LastSeenAt = time.Now().UTC()
+	return writeJSON(path, manifest)
+}
+
+func CloseRun(root, sessionID, runID string, status string) error {
+	path := RunManifestPath(root, sessionID, runID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	if strings.TrimSpace(status) == "" {
+		status = "completed"
+	}
+	manifest.Status = status
 	manifest.LastSeenAt = time.Now().UTC()
 	return writeJSON(path, manifest)
 }
