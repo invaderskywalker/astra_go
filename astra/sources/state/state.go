@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"astra/astra/config"
@@ -152,6 +153,9 @@ func EnsureSession(root string, userID int, sessionID, provider, model string) (
 	if err != nil {
 		return SessionManifest{}, err
 	}
+	if err := migrateLegacySessionRoots(root, sessionID); err != nil {
+		return SessionManifest{}, err
+	}
 	path := SessionManifestPath(root, sessionID)
 	var manifest SessionManifest
 	data, readErr := os.ReadFile(path)
@@ -169,6 +173,22 @@ func EnsureSession(root string, userID int, sessionID, provider, model string) (
 		return SessionManifest{}, err
 	}
 	return manifest, nil
+}
+
+// migrateLegacySessionRoots keeps artifacts and sync records written by the
+// pre-manifest layout visible after session directories became deterministic
+// hashes. It copies only missing files and leaves the legacy paths recoverable.
+func migrateLegacySessionRoots(root, sessionID string) error {
+	legacy := legacySessionName(sessionID)
+	for source, target := range map[string]string{
+		filepath.Join(ProjectDataRoot(root), "artifacts", legacy):        SessionArtifactsRoot(root, sessionID),
+		filepath.Join(ProjectDataRoot(root), "sessions", legacy, "sync"): SessionSyncRoot(root, sessionID),
+	} {
+		if err := copyMissing(source, target); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func CloseSession(root string, sessionID string) error {
@@ -219,4 +239,19 @@ func safe(value string) string {
 		return "unknown"
 	}
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))[:24]
+}
+
+func legacySessionName(value string) string {
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range strings.ToLower(strings.TrimSpace(value)) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			builder.WriteRune(char)
+			lastDash = false
+		} else if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }

@@ -9,13 +9,16 @@ import (
 
 func TestTUIPlanFormattingIsReadable(t *testing.T) {
 	text := formatTUIPlan(map[string]interface{}{
+		"status":                             "in_progress",
 		"mode":                               "task",
 		"goal":                               "Inspect the repository and report evidence",
 		"selected_skills":                    []interface{}{"repository_intelligence"},
 		"mind_map_steps_in_natural_language": []interface{}{"List the root", "Detect the stack"},
 		"success_criteria":                   []interface{}{"No unsupported claims"},
+		"remaining_work":                     []interface{}{"Run validation"},
+		"next_action":                        "Run validation",
 	})
-	for _, want := range []string{"Mode: task", "Goal: Inspect", "Mind map:", "1. List the root", "No unsupported claims"} {
+	for _, want := range []string{"Status: in_progress", "Mode: task", "Goal: Inspect", "Mind map:", "1. List the root", "No unsupported claims", "Remaining: Run validation", "Next: Run validation"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("formatted plan missing %q: %s", want, text)
 		}

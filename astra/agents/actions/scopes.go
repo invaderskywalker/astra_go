@@ -44,10 +44,15 @@ func (a *DataActions) commandDirectoryWithPermission(requested, permission strin
 
 func (a *DataActions) scopeSummary() string {
 	entries, err := a.scopes.List()
-	if err != nil || len(entries) == 0 {
-		return "No additional filesystem scopes are approved."
+	if err != nil {
+		return "Astra-managed project data (implicit read scope): " + a.managedRoot + "\nAdditional filesystem scopes could not be loaded."
 	}
 	var builder strings.Builder
+	builder.WriteString("Astra-managed project data (implicit read scope): " + a.managedRoot + "\n")
+	if len(entries) == 0 {
+		builder.WriteString("No additional filesystem scopes are approved.")
+		return strings.TrimSpace(builder.String())
+	}
 	builder.WriteString("Approved filesystem scopes (use only when relevant and authorized):\n")
 	for _, entry := range entries {
 		fmt.Fprintf(&builder, "- %s [%s] %s\n", entry.Path, strings.Join(entry.Permissions, ","), entry.ID)
@@ -55,6 +60,6 @@ func (a *DataActions) scopeSummary() string {
 	return strings.TrimSpace(builder.String())
 }
 
-// ScopeContext is a compact, planner-facing view of approved roots. It is
+// ScopeContext is a compact, executor-facing view of approved roots. It is
 // descriptive only; every command still re-checks authorization at execution.
 func (a *DataActions) ScopeContext() string { return a.scopeSummary() }

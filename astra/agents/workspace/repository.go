@@ -37,10 +37,12 @@ func (w *Workspace) SearchText(query string, limit int) ([]SearchMatch, error) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "node_modules", "dist", "vendor":
+			if ShouldSkipGeneratedDirectory(entry.Name()) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if ShouldSkipGeneratedFile(entry.Name()) {
 			return nil
 		}
 		if len(matches) >= limit {

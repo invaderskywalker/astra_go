@@ -417,6 +417,8 @@ func (m *tuiModel) consumeEvent(id int, raw string) {
 		m.entries = append(m.entries, tuiEntry{kind: "question", text: strings.TrimSpace(text)})
 	case "error":
 		m.entries = append(m.entries, tuiEntry{kind: "error", text: tuiString(payload, "message")})
+	case "watchdog":
+		m.entries = append(m.entries, tuiEntry{kind: "paused", text: tuiString(payload, "message") + "\n" + tuiString(payload, "next")})
 	case "paused", "stopped", "completed":
 		m.entries = append(m.entries, tuiEntry{kind: typ, text: tuiString(payload, "message")})
 	}
@@ -672,13 +674,20 @@ func tuiEntryView(entry tuiEntry, width int) string {
 
 func formatTUIPlan(payload map[string]interface{}) string {
 	parts := []string{}
+	if status := tuiString(payload, "status"); status != "" {
+		parts = append(parts, "Status: "+status)
+	}
 	if mode := tuiString(payload, "mode"); mode != "" {
 		parts = append(parts, "Mode: "+mode)
 	}
 	if goal := tuiString(payload, "goal"); goal != "" {
 		parts = append(parts, "Goal: "+goal)
 	}
-	if skills := tuiStrings(payload, "selected_skills"); len(skills) > 0 {
+	skills := tuiStrings(payload, "skills")
+	if len(skills) == 0 {
+		skills = tuiStrings(payload, "selected_skills")
+	}
+	if len(skills) > 0 {
 		parts = append(parts, "Skills: "+strings.Join(skills, ", "))
 	}
 	if steps := tuiStrings(payload, "mind_map_steps_in_natural_language"); len(steps) > 0 {
@@ -689,6 +698,24 @@ func formatTUIPlan(payload map[string]interface{}) string {
 	}
 	if criteria := tuiStrings(payload, "success_criteria"); len(criteria) > 0 {
 		parts = append(parts, "Success criteria: "+strings.Join(criteria, " · "))
+	}
+	if completed := tuiStrings(payload, "completed_work"); len(completed) > 0 {
+		parts = append(parts, "Completed: "+strings.Join(completed, " · "))
+	}
+	if remaining := tuiStrings(payload, "remaining_work"); len(remaining) > 0 {
+		parts = append(parts, "Remaining: "+strings.Join(remaining, " · "))
+	}
+	if evidence := tuiStrings(payload, "evidence_collected"); len(evidence) > 0 {
+		parts = append(parts, "Evidence: "+strings.Join(evidence, " · "))
+	}
+	if next := tuiString(payload, "next_action"); next != "" {
+		parts = append(parts, "Next: "+next)
+	}
+	if verification := tuiString(payload, "verification_status"); verification != "" {
+		parts = append(parts, "Verification: "+verification)
+	}
+	if blockers := tuiStrings(payload, "blockers"); len(blockers) > 0 {
+		parts = append(parts, "Blockers: "+strings.Join(blockers, " · "))
 	}
 	return strings.Join(parts, "\n")
 }

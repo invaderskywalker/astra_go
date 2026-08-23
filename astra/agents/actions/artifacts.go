@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"astra/astra/sources/state"
 )
 
 // WriteArtifactParams deliberately accepts content rather than a path. Astra owns
@@ -35,7 +37,7 @@ func (a *DataActions) WriteArtifact(params WriteArtifactParams) ActionResult {
 	if name == "" {
 		return ActionResult{Success: false, Error: "title must contain letters or numbers"}
 	}
-	path := filepath.Join(a.managedRoot, "artifacts", safeSessionName(a.memorySessionID()), name+extension)
+	path := filepath.Join(state.SessionArtifactsRoot(a.workspace.Root, a.memorySessionID()), name+extension)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return ActionResult{Success: false, Error: fmt.Sprintf("prepare artifact directory: %v", err)}
 	}
@@ -67,7 +69,8 @@ func (a *DataActions) syncManagedFile(path string, data []byte, contentType stri
 	// Artifacts remain local by default. A future explicit export/sync command
 	// may copy these managed files elsewhere, but writes never contact a remote
 	// service implicitly.
-	key := filepath.ToSlash(filepath.Join("local", "projects", configProjectID(a.workspace.Root), "sessions", safeSessionName(a.memorySessionID()), "artifacts", filepath.Base(path)))
+	sessionDir := filepath.Base(state.SessionRoot(a.workspace.Root, a.memorySessionID()))
+	key := filepath.ToSlash(filepath.Join("local", "projects", configProjectID(a.workspace.Root), "sessions", sessionDir, "artifacts", filepath.Base(path)))
 	_ = data
 	_ = contentType
 	a.writeSyncRecord(path, key, "local_only", "External sync is disabled by default")
@@ -80,7 +83,7 @@ func (a *DataActions) writeSyncRecord(path, key, status, message string) {
 	if err != nil {
 		return
 	}
-	rel := filepath.Join(a.managedRoot, "sessions", safeSessionName(a.memorySessionID()), "sync", artifactName(filepath.Base(path))+".json")
+	rel := filepath.Join(state.SessionSyncRoot(a.workspace.Root, a.memorySessionID()), artifactName(filepath.Base(path))+".json")
 	absolute := filepath.Clean(rel)
 	if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
 		return
@@ -133,11 +136,4 @@ func artifactName(title string) string {
 		}
 	}
 	return strings.Trim(out.String(), "-")
-}
-
-func safeSessionName(value string) string {
-	if name := artifactName(value); name != "" {
-		return name
-	}
-	return "unsessioned"
 }

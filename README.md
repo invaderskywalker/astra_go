@@ -120,6 +120,18 @@ JSONL file. Commands can target nested project directories with
 `working_directory`; use `run_commands` when several related commands should
 run in order.
 
+Each request now uses one adaptive living task state rather than a separate
+rough-plan phase. After every action Astra updates the goal, evidence,
+completed work, remaining work, blockers, verification status, and next action;
+the next tool choice is based on that current state.
+
+Execution is progress-aware: there is no small normal action cap. Astra keeps
+working while meaningful state or evidence changes, and checkpoints instead of
+looping after six unchanged turns or three identical failures. A last-resort
+emergency ceiling defaults to 256 actions; advanced users can set
+`ASTRA_MAX_ACTION_STEPS` (1–2048) when a workflow genuinely needs a different
+ceiling.
+
 For unfamiliar or potentially large files, Astra uses a progressive evidence
 loop. `analyze_files` streams file size, line count, language, hash, headings,
 symbols, imports, query matches, and recommended line ranges without returning
@@ -245,25 +257,25 @@ capabilities are assembled in layers:
 | Layer | What it does | How long it lasts |
 | --- | --- | --- |
 | Prompt policy | Sets behavior such as evidence-first edits and truthful reporting | One model call; defined in `astra/agents/prompts/prompts.go` |
-| Planner prompt | Chooses a sequence of actions for the user request | Planning call only |
-| Execution prompt | Chooses the next single tool call using the plan and results | One execution decision |
-| Action bookmarks | Compact typed-tool choices shown to every planner; full contracts are loaded lazily | Included in planning/execution calls |
+| Execution prompt | Maintains task state and chooses the next single tool call using intent, evidence, and results | One execution decision, repeated while progress is meaningful |
+| Action bookmarks | Compact typed-tool choices shown to the executor; full contracts are loaded lazily | Included in execution calls |
 | Action activation | Loads complete schema, examples, return shape, side effects, and recovery rules for up to five selected tools | One activation step, then retained for the current request |
-| Agent bookmarks | Groups related tools into routing roles such as repository operator or verifier | Planning context only; does not grant hidden permissions |
+| Agent bookmarks | Groups related tools into routing roles such as repository operator or verifier | Execution context only; does not grant hidden permissions |
 | Action handler | Real Go code that reads, writes, searches, tests, or saves memory | Executes only when selected |
 | Mind Palace | Persists verified knowledge in local linked files | Durable until changed or removed |
 
-So a prompt does not permanently reprogram Astra. A planner prompt changes the
-planner's decision, an execution prompt changes the next action decision, and a
-tool changes the workspace. Only an explicit `save_memory` action creates a
+So a prompt does not permanently reprogram Astra. The execution prompt changes
+the next action decision, and a tool changes the workspace. Only an explicit `save_memory` action creates a
 durable learning. The current action catalog is registered in
 `astra/agents/actions`; the implementation is in Go, not YAML.
 
 The action registry now has two views: compact bookmarks for discovery and
 full activation documentation for the tools selected next. This keeps prompts
 reviewable and powerful without injecting every parameter schema into every
-model call. Agent bookmarks provide role-oriented routing, while the runtime
-action registry and authority policy remain the source of truth for permission.
+model call. When current workspace context already answers a scope question,
+Astra answers directly; otherwise it performs a focused inspection. Agent
+bookmarks provide role-oriented routing, while the runtime action registry and
+authority policy remain the source of truth for permission.
 
 ## File-backed memory
 

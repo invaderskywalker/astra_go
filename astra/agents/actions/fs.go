@@ -61,7 +61,7 @@ func (a *DataActions) ReadFilesInRepo(params ReadFilesParams) ActionResult {
 		}
 		var data []byte
 		var err error
-		data, err = a.readWorkspaceOrAttachment(request.Path, request.StartLine, request.EndLine)
+		data, err = a.readWorkspaceOrManaged(request.Path, request.StartLine, request.EndLine)
 		if err != nil {
 			return ActionResult{Success: false, Error: fmt.Sprintf("read %s: %v", request.Path, err), FilesRead: filesRead}
 		}
@@ -78,10 +78,11 @@ func (a *DataActions) ReadFilesInRepo(params ReadFilesParams) ActionResult {
 	return ActionResult{Success: true, Summary: fmt.Sprintf("Read %d file(s)", len(filesRead)), FilesRead: filesRead, Diagnostics: contents}
 }
 
-// readWorkspaceOrAttachment keeps normal reads inside the connected project,
-// while allowing an explicitly attached file from the private session store to
-// be read back by its absolute path. Arbitrary machine paths remain denied.
-func (a *DataActions) readWorkspaceOrAttachment(path string, start, end int) ([]byte, error) {
+// readWorkspaceOrManaged keeps normal reads inside the connected project,
+// while allowing explicitly attached files and Astra-owned project/session
+// records to be read back by their absolute paths. Arbitrary machine paths
+// remain denied.
+func (a *DataActions) readWorkspaceOrManaged(path string, start, end int) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		if start > 0 || end > 0 {
 			lines, err := a.workspace.ReadFileLines(path, start, end)
@@ -104,11 +105,10 @@ func (a *DataActions) readWorkspaceOrAttachment(path string, start, end int) ([]
 	if err != nil {
 		return nil, err
 	}
-	attachmentRoot := filepath.Join(a.managedRoot, "sessions", safeSessionName(a.memorySessionID()), "attachments")
-	root, _ := filepath.EvalSymlinks(attachmentRoot)
+	managedRoot, _ := filepath.EvalSymlinks(a.managedRoot)
 	candidate, _ := filepath.EvalSymlinks(absolute)
-	if root == "" || candidate == "" || (candidate != root && !strings.HasPrefix(candidate, root+string(os.PathSeparator))) {
-		return nil, fmt.Errorf("absolute reads are allowed only for explicitly attached session files")
+	if managedRoot == "" || candidate == "" || (candidate != managedRoot && !strings.HasPrefix(candidate, managedRoot+string(os.PathSeparator))) {
+		return nil, fmt.Errorf("absolute reads are allowed only for Astra-managed project/session files")
 	}
 	if start > 0 || end > 0 {
 		data, err := os.ReadFile(candidate)

@@ -10,8 +10,8 @@ Astra is a model-directed system with explicit runtime context:
 
 ```text
 user request
-  -> planner (intent, mode, skills, success criteria)
-  -> executor (one concrete action at a time)
+  -> living task state (intent, mode, skills, success criteria, evidence)
+  -> executor (one concrete action at a time, reassessed after every result)
   -> typed action (local, web, memory, or artifact capability)
   -> evidence
   -> response writer (truthful handoff)
@@ -26,11 +26,11 @@ and available actions—is injected into the prompts instead of being guessed.
 | Capability | Current behavior | Evidence/output | Primary implementation |
 | --- | --- | --- | --- |
 | Conversation | Answers questions and explains concepts without pretending tools ran | User-facing response | `astra/agents/prompts` and `BaseAgent` |
-| Workspace orientation | Lists files, creates directory trees, searches text, analyzes file metadata/structure, reads bounded files, and inspects Go structure | Paths, sizes, hashes, line counts, headings, symbols, matches, recommended ranges, snippets, diagnostics | `astra/agents/workspace`, `astra/agents/actions` |
+| Workspace orientation | Lists files, creates directory trees, searches text, analyzes file metadata/structure, reads bounded files, and inspects Go structure | Paths, sizes, hashes, line counts, headings, symbols, matches, recommended ranges, snippets, diagnostics; generated caches and binary artifacts are excluded from recursive analysis | `astra/agents/workspace`, `astra/agents/actions` |
 | Code delivery | Applies precise edits, then can build/test | Changed files plus validator output | `astra/agents/actions/edits.go`, `engineering.go` |
 | Command execution | Runs one command or a short ordered sequence, each with an explicit working directory, timeout, and captured output; expected non-zero checks can be marked | stdout, stderr, exit code, duration, per-step results | `astra/agents/workspace/commands.go`, `astra/agents/actions/engineering.go` |
 | Web research | Searches current external information and scrapes supplied URLs when needed | Source URLs and extracted content | `astra/agents/actions/scraping_action.go` |
-| File artifacts | Writes validated Markdown, JSON, JSONL, CSV, or text to the private external project/session artifact area | Exact artifact path and format | `astra/agents/actions/artifacts.go` |
+| File artifacts | Writes validated Markdown, JSON, JSONL, CSV, or text to the private external project/session artifact area; the same managed root can be read back by `read_files` | Exact artifact path and format, independently readable within Astra's managed scope | `astra/agents/actions/artifacts.go`, `fs.go` |
 | Mind Palace | Stores curated linked Markdown memory and append-only session evidence | Memory file, provenance, links | `astra/agents/actions/learning_knowledge.go`, `sources/mindpalace` |
 | Local identity | Single private profile with explicit signup/login/logout; no directory-derived users | Owner-only profile and login marker under `~/.astra/identity` | `astra/sources/identity`, `astra/cmd/auth.go` |
 | Local storage | Session history, manifests, artifacts, attachments, and Mind Palace are file-backed outside connected repositories; external sync is disabled by default | Portable files with local status records | `astra/sources/state`, `astra/sources/mindpalace` |
@@ -38,7 +38,7 @@ and available actions—is injected into the prompts instead of being guessed.
 | CLI workspace views | Dashboard, project files, user Mind Palace, session manifests/evidence, and managed sync configuration are navigable from one shell | Read-only panels, metrics, Unicode bars, and bounded file listings | `astra/cmd/tui.go`, `astra/cmd/views.go`, `astra/sources/state` |
 | Self-improvement | Qwen can scan for one bounded proposal; Luna can review; human approves | Reviewable proposal file | `astra/agents/improvements` |
 | Action bookmarks | Every action has a compact bookmark; the executor activates full documentation for the next one to five tools and records fallback activation when needed | Bookmark catalog, activation report, action activation event | `astra/agents/actions/action_registry.go`, `astra/agents/prompts` |
-| Agent bookmarks | Main agent can route a request through role-oriented capability groupings without granting hidden permissions | Agent bookmark catalog in planning context | `astra/agents/prompts/agents.go` |
+| Agent bookmarks | Main agent can route a request through role-oriented capability groupings without granting hidden permissions | Agent bookmark catalog in execution context | `astra/agents/prompts/agents.go` |
 | Filesystem scopes | Stores explicit read/write/execute approvals for additional directories and re-checks command working directories at runtime | Private scope registry and denied/approved command evidence | `astra/sources/scope`, `astra/agents/actions/scopes.go` |
 | Worker agents | Supervisor can spawn bounded goal-oriented branches, wait for results, stop workers, and expose lifecycle metadata | Branch IDs, statuses, goals, models, event counts, and outputs | `astra/agents/core/supervisor.go`, `astra/agents/actions/agents.go` |
 | Prompt/personality profiles | Stores enabled user-authored Markdown profiles globally and injects them as lower-priority preferences | Profile files, index, enabled/disabled status | `astra/sources/promptstore`, `astra/agents/actions/prompt_profiles.go` |
@@ -69,11 +69,12 @@ context.
 ## Prompt and skill architecture
 
 - `EngineeringPolicy` is the shared behavioral contract.
-- `PlanningSystem` chooses mode, skills, evidence, and acceptance checks.
-- `ExecutionSystem` chooses one typed action and tracks results.
+- `ExecutionSystem` maintains the living task state, chooses one typed action,
+  and updates evidence, completed work, remaining work, blockers, and
+  verification after every result.
 - `ResponseSystem` turns evidence into a clean handoff.
 - `skills.go` contains reusable judgment modules. A skill does not add tools or
-  authority; it tells the planner how to use existing tools well.
+  authority; it tells the executor how to use existing tools well.
 - `ActionCatalog` is the compact bookmark view. `activate_actions` and
   `ActivatedActionDocumentation` provide full schemas only when needed.
 - `agents.go` groups related tools into role bookmarks. These are routing hints,
@@ -82,6 +83,10 @@ context.
   criteria drive the minimum action set, negative claims require supporting
   checks, task mode cannot finish without required evidence, and clarification
   is reserved for material unresolved decisions.
+- Each request has one adaptive living task state rather than a separate rough
+  plan. The state is updated after every action with current evidence,
+  completed work, remaining work, blockers, verification status, and the next
+  action.
 - Large-file analysis is progressive: `analyze_files` streams metadata and
   structural signals without returning source bodies; `search_code` locates
   evidence; `read_files` streams only requested line ranges. Results are
@@ -112,7 +117,10 @@ For an older binary, use `:stop`, exit Astra, rebuild, and restart. To unload a
 local Ollama model manually, inspect it with `ollama ps` and stop the named
 model with `ollama stop <model>`.
 
-Execution requests are bounded to 48 action turns per request. Reaching that
-bound is now reported as a blocker and does not produce a success/completion
-claim. This leaves room for real scaffold-and-verify workflows while preventing
-an accidental planner loop from running forever.
+Execution requests use a progress-aware watchdog rather than a small normal
+step limit. Astra may continue through a long inspect → change → verify
+workflow while the living task state or evidence changes. Six unchanged turns
+or three identical failures checkpoint the task as blocked with a recovery
+instruction. A last-resort emergency ceiling defaults to 256 actions and can
+be adjusted with `ASTRA_MAX_ACTION_STEPS` (capped at 2048); reaching it never
+produces a completion claim.

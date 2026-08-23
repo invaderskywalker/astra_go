@@ -779,6 +779,15 @@ func printCLIEvent(message string) {
 				printCLIText(colorutil.ColorError(text))
 			}
 		}
+	case "watchdog":
+		if payload != nil {
+			if text, ok := payload["message"].(string); ok {
+				printCLIText(colorutil.ColorWarning("⏳ " + text))
+			}
+			if next, ok := payload["next"].(string); ok && strings.TrimSpace(next) != "" {
+				printCLIText(colorutil.ColorInfo("  Next: " + next))
+			}
+		}
 	case "paused":
 		if payload != nil {
 			if text, ok := payload["message"].(string); ok {
@@ -834,14 +843,51 @@ func printPlan(plan map[string]interface{}) {
 		return
 	}
 	fmt.Print(colorutil.ColorPrompt("\r\n┌─ Astra plan\r\n"))
+	if status := valueString(plan["status"]); status != "" {
+		fmt.Print(colorutil.ColorInfo("│ Status: " + status + "\r\n"))
+	}
 	if mode := valueString(plan["mode"]); mode != "" {
 		fmt.Print(colorutil.ColorInfo("│ Mode: " + mode + "\r\n"))
 	}
 	if goal := valueString(plan["goal"]); goal != "" {
 		printWrappedCLI("│ Goal: ", goal, "│       ")
 	}
-	if skills := valueStrings(plan["selected_skills"]); len(skills) > 0 {
+	skills := valueStrings(plan["skills"])
+	if len(skills) == 0 {
+		skills = valueStrings(plan["selected_skills"])
+	}
+	if len(skills) > 0 {
 		printWrappedCLI("│ Skills: ", strings.Join(skills, ", "), "│         ")
+	}
+	if completed := valueStrings(plan["completed_work"]); len(completed) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Completed:\r\n"))
+		for _, item := range completed {
+			printWrappedCLI("│   ✓ ", item, "│     ")
+		}
+	}
+	if remaining := valueStrings(plan["remaining_work"]); len(remaining) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Remaining:\r\n"))
+		for _, item := range remaining {
+			printWrappedCLI("│   • ", item, "│     ")
+		}
+	}
+	if evidence := valueStrings(plan["evidence_collected"]); len(evidence) > 0 {
+		fmt.Print(colorutil.ColorInfo("│ Evidence:\r\n"))
+		for _, item := range evidence {
+			printWrappedCLI("│   • ", item, "│     ")
+		}
+	}
+	if next := valueString(plan["next_action"]); next != "" {
+		printWrappedCLI("│ Next: ", next, "│       ")
+	}
+	if verification := valueString(plan["verification_status"]); verification != "" {
+		fmt.Print(colorutil.ColorInfo("│ Verification: " + verification + "\r\n"))
+	}
+	if blockers := valueStrings(plan["blockers"]); len(blockers) > 0 {
+		fmt.Print(colorutil.ColorWarning("│ Blockers:\r\n"))
+		for _, item := range blockers {
+			printWrappedCLI("│   ! ", item, "│     ")
+		}
 	}
 	if criteria := valueStrings(plan["success_criteria"]); len(criteria) > 0 {
 		fmt.Print(colorutil.ColorInfo("│ Success criteria:\r\n"))

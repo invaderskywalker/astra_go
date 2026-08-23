@@ -44,6 +44,12 @@ func (w *Workspace) ListFiles(path string, recursive bool) ([]FileInfo, error) {
 		if err != nil {
 			return err
 		}
+		if p != root && info.IsDir() && ShouldSkipGeneratedDirectory(info.Name()) {
+			return filepath.SkipDir
+		}
+		if p != root && !info.IsDir() && ShouldSkipGeneratedFile(info.Name()) {
+			return nil
+		}
 		rel, _ := filepath.Rel(w.Root, p)
 		result = append(result, FileInfo{
 			Path:         rel,

@@ -6,24 +6,9 @@ import (
 	"astra/astra/agents/actions"
 )
 
-func TestPlanningPromptIncludesMemoryAndArtifactPolicy(t *testing.T) {
-	prompt := PlanningSystem("Astra", "engineer", "history", "memory decision", "write_artifact", PlanSchema, "/tmp/astra-project")
-	for _, expected := range []string{"<retrieved_memory>", "memory decision", "write_artifact", "current workspace evidence", "<skill_catalog>", "<agent_bookmarks>", "<workspace_context>", "/tmp/astra-project", "success_criteria", "stop_conditions", "activate_actions", "minimum sufficient evidence", "acceptance criteria"} {
-		if !contains(prompt, expected) {
-			t.Fatalf("planning prompt missing %q", expected)
-		}
-	}
-}
-
 func TestPromptIncludesEvidenceAndClarificationGates(t *testing.T) {
-	planning := PlanningSystem("Astra", "engineer", "history", "memory", "list_files", PlanSchema, "/tmp/project")
-	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision"} {
-		if !contains(planning, expected) {
-			t.Fatalf("planning prompt missing decision rule %q", expected)
-		}
-	}
-	execution := ExecutionSystem("{\"mode\":\"task\"}", "{}", "list_files", ExecutionSchema, "/tmp/project")
-	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision", "Task completion gate"} {
+	execution := ExecutionSystem("{\"status\":\"understanding\"}", "{}", "list_files", ExecutionSchema, "/tmp/project", "retrieved memory")
+	for _, expected := range []string{"negative claim requires", "smallest set of actions", "only when an essential decision", "Task completion gate", "living task state", "complete updated task_state", "<retrieved_memory>", "retrieved memory"} {
 		if !contains(execution, expected) {
 			t.Fatalf("execution prompt missing decision rule %q", expected)
 		}

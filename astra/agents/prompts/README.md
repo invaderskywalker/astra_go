@@ -8,16 +8,16 @@ job while sharing one consistent operating policy.
 
 1. `EngineeringPolicy` — identity, authority, evidence, workspace, memory,
    artifacts, recovery, and completion rules shared by every call.
-2. Planning prompt — interprets the request, preserves conversation continuity,
-   selects the interaction mode and applicable skills, defines success criteria,
-   and builds an inspectable mind map.
-3. Execution prompt — acts as a state machine. It selects one registered action
-   at a time, records expected evidence, handles failure, and stops at a clear
-   condition.
+2. Living task state — records the interpreted request, interaction mode,
+   applicable skills, success criteria, evidence, completed and remaining work,
+   blockers, verification, and next action.
+3. Execution prompt — reassesses that living state after every result and acts
+   as a state machine. It selects one registered action at a time, records
+   expected evidence, handles failure, and stops at a clear condition.
 4. Response prompt — converts execution evidence into a truthful user handoff.
 5. `skills.go` — reusable competencies. Skills guide judgment; they do not grant
    tools or permissions.
-6. Action bookmarks and activation — the planner sees compact capability
+6. Action bookmarks and activation — the executor sees compact capability
    bookmarks. Before a first tool call, `activate_actions` loads the selected
    action's complete prose contract, parameter schema, examples, return shape,
    side effects, approval rule, and failure recovery guidance. Activation is
@@ -31,7 +31,7 @@ job while sharing one consistent operating policy.
 
 Prompt behavior is outcome-driven rather than repository-specific:
 
-- Explicit user acceptance criteria are binding. The planner identifies the
+- Explicit user acceptance criteria are binding. The executor identifies the
   evidence that proves each criterion and selects the smallest sufficient set
   of actions.
 - Negative claims require negative evidence. A listing establishes structure,

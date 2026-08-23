@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +25,14 @@ import (
 )
 
 const (
-	DefaultModel       = "gpt-5.6-luna"
-	DefaultMaxTokens   = 10000
-	DefaultTemp        = 0.1
-	NumRecentSummaries = 3 // Number of recent session summaries to inject into context
+	DefaultModel                 = "gpt-5.6-luna"
+	DefaultMaxTokens             = 10000
+	DefaultTemp                  = 0.1
+	NumRecentSummaries           = 3 // Number of recent session summaries to inject into context
+	defaultEmergencyActionBudget = 256
+	maxEmergencyActionBudget     = 2048
+	maxStalledTurns              = 6
+	maxRepeatedFailures          = 3
 )
 
 type BaseAgent struct {
@@ -38,7 +43,8 @@ type BaseAgent struct {
 	LLM              llm.LLMClient
 	Model            string
 	ExecutionPlans   []map[string]interface{}
-	RoughPlan        map[string]interface{}
+	TaskState        map[string]interface{}
+	taskMemory       string
 	SessionID        string
 	WorkspaceRoot    string
 	LogInfo          map[string]interface{}
@@ -226,15 +232,15 @@ func (a *BaseAgent) handleEvents() {
 }
 
 // --- SESSION SUMMARY + RECENT SUMMARIES LOGIC ---
-// Generates a short, structured summary given query, roughPlan, execPlans, and results.
-func (a *BaseAgent) GenerateSessionSummary(query string, roughPlan interface{}, execPlans interface{}, results interface{}) string {
+// Generates a short, structured summary from the living task state and results.
+func (a *BaseAgent) GenerateSessionSummary(query string, taskState interface{}, execPlans interface{}, results interface{}) string {
 	// Compose a brief summary: request + top-level actions + outcome.
 	// Reduce everything to 2-3 sentences.
 
-	// Extract primary actions (if possible) from the rough plan
+	// Extract completed/remaining work from the living task state.
 	actions := ""
-	if rp, ok := roughPlan.(map[string]interface{}); ok {
-		if steps, ok := rp["mind_map_steps_in_natural_language"].([]interface{}); ok {
+	if state, ok := taskState.(map[string]interface{}); ok {
+		if steps, ok := state["completed_work"].([]interface{}); ok {
 			strs := make([]string, 0)
 			for _, s := range steps {
 				if sstr, ok := s.(string); ok {
@@ -243,6 +249,11 @@ func (a *BaseAgent) GenerateSessionSummary(query string, roughPlan interface{}, 
 			}
 			if len(strs) > 0 {
 				actions = strings.Join(strs, "; ")
+			}
+		}
+		if actions == "" {
+			if next, ok := state["next_action"].(string); ok {
+				actions = next
 			}
 		}
 	}
@@ -285,71 +296,9 @@ func (a *BaseAgent) GetRecentSessionSummaries(n int) ([]string, error) {
 	return result, nil
 }
 
-// --- PLANNING/PROMPT GENERATION ---
-func (a *BaseAgent) createRoughPlan(ctx context.Context, query string) (plan map[string]interface{}) {
-	defer func() {
-		if r := recover(); r != nil {
-			logging.ErrorLogger.Error("Planning failure", zap.Any("recover", r))
-			plan = map[string]interface{}{"error": fmt.Sprint(r)}
-		}
-	}()
-
-	// Get lightweight action summaries (name + description) from runtime registry
-	actionSummaries := a.dataActions.ListActions()
-	memoryContext, memoryErr := a.dataActions.MemoryContext(query, 6)
-	if memoryErr != nil {
-		logging.AppLogger.Warn("memory retrieval unavailable; continuing without durable context", zap.Error(memoryErr))
-		memoryContext = "Memory retrieval failed; rely on current workspace evidence."
-	}
-
-	// Prompts are assembled only in the prompts package.
-	role := a.Role
-	if strings.TrimSpace(role) == "" {
-		role = prompts.DefaultProfile.Role
-	}
-	systemPrompt := prompts.PlanningSystem(
-		prompts.DefaultProfile.Name,
-		role,
-		jsonutils.ToJSON(a.getHistory()),
-		memoryContext,
-		prompts.ActionCatalog(actionSummaries),
-		prompts.PlanSchema,
-		a.promptWorkspaceContext(),
-	)
-
-	currentDateStr := time.Now().Format("January 2, 2006")
-	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
-
-	user_message := datePreamble + prompts.PlanningUser(query)
-
-	req := llm.ChatRequest{
-		Model: a.Model,
-		Messages: []llm.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: user_message},
-		},
-		Stream: false,
-	}
-
-	resp, err := a.LLM.Run(ctx, req)
-	if err != nil {
-		panic(fmt.Errorf("failed to create plan: %w", err))
-	}
-
-	respJSON := jsonutils.ExtractJSON(resp)
-	// 🔥 ADD THIS
-	// if !utf8.ValidString(respJSON) {
-	// 	respJSON = strings.ToValidUTF8(respJSON, "")
-	// }
-	if err := json.Unmarshal([]byte(respJSON), &plan); err != nil {
-		panic(fmt.Errorf("invalid plan format: %w", err))
-	}
-	a.RoughPlan = plan
-	return plan
-}
-
-// generateNextExecutionPlan and other methods remain unchanged
-func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
+// generateNextExecutionPlan evaluates the living task state and selects one
+// concrete next action. It is the only planning call in the execution loop.
+func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, taskState map[string]interface{}, stepIndex int, results any) (plan map[string]interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logging.ErrorLogger.Error("generateNextExecutionPlan failure", zap.Any("recover", r))
@@ -364,11 +313,12 @@ func (a *BaseAgent) generateNextExecutionPlan(ctx context.Context, roughPlan map
 	}
 
 	systemPrompt := prompts.ExecutionSystem(
-		jsonutils.ToJSON(roughPlan),
+		jsonutils.ToJSON(taskState),
 		jsonutils.ToJSON(results),
 		actionCatalog,
 		prompts.ExecutionSchema,
 		a.promptWorkspaceContext(),
+		a.taskMemory,
 	)
 
 	currentDateStr := time.Now().Format("January 2, 2006")
@@ -441,41 +391,80 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 	// Execution plans are per request. Keeping prior plans here makes later
 	// requests look as if they already performed actions they never performed.
 	a.ExecutionPlans = nil
+	a.TaskState = map[string]interface{}{
+		"status":              "understanding",
+		"mode":                "unknown",
+		"goal":                strings.TrimSpace(query),
+		"desired_outcome":     "Determine and complete the outcome requested by the user.",
+		"skills":              []interface{}{},
+		"success_criteria":    []interface{}{},
+		"constraints":         []interface{}{},
+		"assumptions":         []interface{}{},
+		"evidence_collected":  []interface{}{},
+		"completed_work":      []interface{}{},
+		"remaining_work":      []interface{}{"Understand the request and select the first evidence-producing action."},
+		"blockers":            []interface{}{},
+		"verification_status": "pending",
+		"artifacts":           []interface{}{},
+		"next_action":         "Understand the request and select the first evidence-producing action.",
+	}
 	a.activatedActions = make(map[string]bool)
 	a.storeState("user_query", query)
-	// Step 1: Create the rough plan
-	a.status(ch, "Understanding your request")
-	roughPlan := a.createRoughPlan(ctx, query)
-	if ctx.Err() != nil {
-		a.stopped(ch)
-		return
+	memoryContext, memoryErr := a.dataActions.MemoryContext(query, 6)
+	if memoryErr != nil {
+		memoryContext = "Memory retrieval failed; rely on current workspace evidence."
 	}
-	if roughPlan["error"] != nil {
-		ch <- a.formatEvent("error", map[string]interface{}{
-			"message": fmt.Sprint(roughPlan["error"]),
-		})
-		return
-	}
-	a.RoughPlan = roughPlan
-	ch <- a.formatEvent("plan", roughPlan)
-	if mode, _ := roughPlan["mode"].(string); mode == "conversation" {
-		a.status(ch, "Preparing answer")
-		a.streamResponse(ctx, query, map[string]interface{}{"steps": []map[string]interface{}{}}, ch)
-		return
-	}
-	a.status(ch, "Plan ready")
+	a.taskMemory = memoryContext
+	a.storeState("task_state", a.TaskState)
 	results := []map[string]interface{}{}
 	stepIndex := 1
-	// Keep requests bounded while leaving enough room for real workflows that
-	// orient, scaffold, validate, and document a project.
-	const maxExecutionSteps = 48
-	for stepIndex <= maxExecutionSteps {
+	emergencyBudget := emergencyActionBudget()
+	previousProgress := ""
+	stalledTurns := 0
+	previousFailure := ""
+	repeatedFailures := 0
+	watchdog := func(action string, result map[string]interface{}) bool {
+		currentProgress := progressSignature(a.TaskState, action, result)
+		if currentProgress == previousProgress {
+			stalledTurns++
+		} else {
+			stalledTurns = 0
+		}
+		previousProgress = currentProgress
+		failure := repeatedFailureSignature(action, result)
+		if failure != "" && failure == previousFailure {
+			repeatedFailures++
+		} else if failure != "" {
+			repeatedFailures = 1
+		} else {
+			repeatedFailures = 0
+		}
+		previousFailure = failure
+		if stalledTurns < maxStalledTurns && repeatedFailures < maxRepeatedFailures {
+			return false
+		}
+		reason := fmt.Sprintf("progress watchdog paused the task after %d unchanged turns", stalledTurns)
+		if repeatedFailures >= maxRepeatedFailures {
+			reason = fmt.Sprintf("progress watchdog paused the task after %d identical failures", repeatedFailures)
+		}
+		a.TaskState["status"] = "blocked"
+		a.TaskState["blockers"] = []interface{}{reason}
+		a.TaskState["next_action"] = "Review the latest evidence, adjust the request or parameters, then ask Astra to continue."
+		a.storeState("task_state", a.TaskState)
+		ch <- a.formatEvent("watchdog", map[string]interface{}{"message": reason, "action": action, "next": "continue after reviewing the blocker"})
+		return true
+	}
+	for stepIndex <= emergencyBudget {
 		if !a.checkpoint(ctx, ch) {
 			a.stopped(ch)
 			return
 		}
-		a.status(ch, fmt.Sprintf("Planning next action (%d)", stepIndex))
-		expanded := a.generateNextExecutionPlan(ctx, a.RoughPlan, stepIndex, results)
+		if stepIndex == 1 {
+			a.status(ch, "Understanding your request")
+		} else {
+			a.status(ch, fmt.Sprintf("Reassessing task state (%d)", stepIndex))
+		}
+		expanded := a.generateNextExecutionPlan(ctx, a.TaskState, stepIndex, results)
 		if ctx.Err() != nil {
 			a.stopped(ch)
 			return
@@ -491,6 +480,13 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 				"message": fmt.Sprint(errVal),
 			})
 			return
+		}
+		if updated, ok := expanded["task_state"].(map[string]interface{}); ok {
+			a.TaskState = mergeTaskState(a.TaskState, updated)
+		}
+		a.storeState("task_state", a.TaskState)
+		if stepIndex == 1 || len(results) > 0 {
+			ch <- a.formatEvent("plan", a.TaskState)
 		}
 		shouldContinue := false
 		if sc, ok := expanded["should_continue"].(bool); ok {
@@ -550,6 +546,10 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 				"executed_plan": planToExec,
 				"result":        finalThought,
 			})
+			if watchdog(actionName, map[string]interface{}{"internal": map[string]interface{}{"success": true, "summary": finalThought}}) {
+				return
+			}
+			stepIndex++
 			continue
 		}
 		if actionName == "read_image_with_vision" {
@@ -572,7 +572,10 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 					"vision_results": visionResults,
 				},
 			})
-
+			if watchdog(actionName, map[string]interface{}{"internal": map[string]interface{}{"success": true, "summary": "vision evidence collected"}}) {
+				return
+			}
+			stepIndex++
 			continue
 		}
 		// A clarification is a terminal state for this request. Do not feed it
@@ -612,22 +615,101 @@ func (a *BaseAgent) runQuery(query string, ch chan string) {
 			"executed_plan": planToExec,
 			"result":        summarizeExecutionResult(execRes),
 		})
+		if watchdog(actionName, actionSummary) {
+			return
+		}
 		stepIndex++
 	}
-	if stepIndex > maxExecutionSteps {
-		message := fmt.Sprintf("execution stopped after the %d-action safety limit; no completion claim was made", maxExecutionSteps)
+	if stepIndex > emergencyBudget {
+		message := fmt.Sprintf("emergency action budget (%d) reached; task was checkpointed without a completion claim", emergencyBudget)
+		a.TaskState["status"] = "blocked"
+		a.TaskState["blockers"] = []interface{}{message}
+		a.TaskState["next_action"] = "Ask Astra to continue from the recorded task state after reviewing the latest evidence."
+		a.storeState("task_state", a.TaskState)
 		a.storeState("execution_blocked", map[string]interface{}{"reason": message, "steps": len(a.ExecutionPlans)})
 		ch <- a.formatEvent("error", map[string]interface{}{"message": message, "next": "Ask Astra to continue from the recorded evidence."})
 		return
 	}
 	fullPlan := map[string]interface{}{
-		"rough_plan":      a.RoughPlan,
+		"task_state":      a.TaskState,
 		"execution_plans": a.ExecutionPlans,
 	}
 	a.storeState("full_plan", fullPlan)
 	// Generate the user-facing response only after execution evidence is ready.
 	a.status(ch, "Preparing answer")
-	a.streamResponse(ctx, query, map[string]interface{}{"steps": results}, ch)
+	a.streamResponse(ctx, query, map[string]interface{}{"task_state": a.TaskState, "steps": results}, ch)
+}
+
+func mergeTaskState(current, updated map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{}, len(current)+len(updated))
+	for key, value := range current {
+		merged[key] = value
+	}
+	for key, value := range updated {
+		if value != nil {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+func emergencyActionBudget() int {
+	configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ASTRA_MAX_ACTION_STEPS")))
+	if err != nil || configured <= 0 {
+		return defaultEmergencyActionBudget
+	}
+	if configured > maxEmergencyActionBudget {
+		return maxEmergencyActionBudget
+	}
+	return configured
+}
+
+// progressSignature deliberately ignores volatile timing and working-directory
+// fields. It represents whether the task's state or action outcome actually
+// changed, which lets Astra continue through long work while detecting loops.
+func progressSignature(taskState map[string]interface{}, action string, result map[string]interface{}) string {
+	stableResult := make(map[string]interface{}, len(result))
+	for key, raw := range result {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		stableResult[key] = map[string]interface{}{
+			"success":       entry["success"],
+			"summary":       entry["summary"],
+			"error":         entry["error"],
+			"files_read":    entry["files_read"],
+			"files_written": entry["files_written"],
+			"artifacts":     entry["artifacts"],
+		}
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"task_state": taskState,
+		"action":     action,
+		"result":     stableResult,
+	})
+	return string(payload)
+}
+
+func repeatedFailureSignature(action string, result map[string]interface{}) string {
+	keys := make([]string, 0, len(result))
+	for key := range result {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		raw := result[key]
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if success, _ := entry["success"].(bool); !success {
+			errorText, _ := entry["error"].(string)
+			summaryText, _ := entry["summary"].(string)
+			return action + "|" + errorText + "|" + summaryText
+		}
+	}
+	return ""
 }
 
 func (a *BaseAgent) streamResponse(ctx context.Context, query string, results map[string]interface{}, ch chan<- string) {
@@ -992,7 +1074,7 @@ func (a *BaseAgent) thinkAloud(ctx context.Context, results map[string]interface
 		"context": contextInfo,
 		"goal":    goal,
 	}
-	systemPrompt := prompts.ThinkAloudSystem(contextInfo, goal, jsonutils.ToJSON(a.RoughPlan), jsonutils.ToJSON(results))
+	systemPrompt := prompts.ThinkAloudSystem(contextInfo, goal, jsonutils.ToJSON(a.TaskState), jsonutils.ToJSON(results))
 	currentDateStr := time.Now().Format("January 2, 2006")
 	datePreamble := fmt.Sprintf("Today's date is: %s.\n\n", currentDateStr)
 	userPrompt := datePreamble + "Review the next action now."

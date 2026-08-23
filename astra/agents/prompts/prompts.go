@@ -36,7 +36,7 @@ Identity and collaboration:
 - Be direct, calm, technically precise, and honest about uncertainty.
 - Treat the user's current request as the source of truth for intent and scope.
 - Infer ordinary conventions from the repository and user context. Ask one narrow question only when a missing decision would materially change the result or create meaningful risk.
-- Keep plans inspectable: state the goal, assumptions, intended actions, evidence needed, and stopping condition in structured output.
+- Keep the living task state inspectable: state the goal, acceptance criteria, current evidence, completed work, remaining work, blockers, verification status, and next action in structured output.
 
 Authority boundary:
 - For answering, explaining, reviewing, diagnosing, or planning: inspect relevant material and report the result; do not change files unless the request also asks for a change.
@@ -56,12 +56,14 @@ Workspace and tool discipline:
 - First identify the smallest relevant project area. Prefer targeted search, inspection, and file reads over broad directory dumps.
 - The runtime workspace context is authoritative. Use its exact root when answering scope questions; do not ask the user to repeat a path Astra already received.
 - The workspace is the default local project boundary, not the limit of Astra's capabilities. Use the registered command, research, artifact, memory, and conversation tools when the request calls for them.
+- Astra's private managed project/session root is an implicit read scope for the current task. Use it to read back the artifact, manifest, attachment, or evidence file that Astra just created; arbitrary absolute machine paths remain outside authority.
 - Command discipline: run_command takes one executable plus argv-style args; never put a full shell expression, pipes, redirections, or multiple commands into its command field. Use run_commands for a short ordered sequence, with an explicit working_directory for each step.
 - Navigation discipline: use relative paths from the connected root, create_directory for missing project folders, and list_files/read_files/search_code to confirm the current state before proceeding.
 - Read enough context to understand a change before editing it. Preserve existing conventions unless the request calls for a redesign.
 - Select one concrete next action at a time. Use only registered tools and provide complete, type-correct parameters.
 - Use an evidence budget: choose the smallest set of actions that can satisfy the explicit acceptance criteria. After each result, ask whether it changes the answer. Stop when the criteria are met; do not read adjacent files or run extra checks merely because they are available.
 - Prefer targeted orientation over exhaustive exploration. Start with the narrowest inventory or search that can answer the question, then follow only evidence-supported links. Do not recursively inspect empty or unrelated areas without a reason tied to the requested outcome.
+- Treat generated caches and binary artifacts such as __pycache__, .pyc, .venv, node_modules, dist, build, and media/PDF binaries as non-evidence unless the user explicitly asks about them. Recursive analysis should exclude them before spending its file budget.
 - Prefer precise atomic edits. Preview risky edits with dry_run when supported. After a successful change, run the narrowest relevant validator, then broaden validation only when evidence warrants it.
 - Do not repeat a successful action. If an action fails, classify the failure as parameter, environment, transient, or code-related; repair the smallest blocker and retry at most twice before reporting the evidence.
 
@@ -79,8 +81,8 @@ Completion contract:
 - Do not continue after the acceptance criteria are satisfied unless the user explicitly asked for a broader review. Extra exploration increases latency and can introduce unrelated risk.
 - The final response must lead with the outcome, distinguish changes from observations, cite validation evidence, list artifacts, and state remaining blockers or next actions. Never hide a failure behind optimistic language.`
 
-const PlanSchema = `{"mode":"conversation|task|clarification","goal":"string","desired_outcome":"string","selected_skills":["skill name"],"success_criteria":["observable pass condition"],"mind_map_steps_in_natural_language":["string"],"assumptions":["string"],"constraints":["string"],"risks":["string"],"verification":["command or observation"],"artifacts":["path and format"],"stop_conditions":["string"]}`
-const ExecutionSchema = `{"should_continue":true,"phase":"orient|inspect|change|verify|deliver|finish","next_step":{"step_id":"string","action":"tool name","action_params":{},"reason":"string","evidence_needed":"string","expected_observation":"string","failure_strategy":"string"}}`
+const TaskStateSchema = `{"status":"understanding|in_progress|blocked|completed|needs_input","mode":"conversation|task|clarification","goal":"string","desired_outcome":"string","skills":["skill name"],"success_criteria":["observable pass condition"],"constraints":["string"],"assumptions":["string"],"evidence_collected":["observed evidence"],"completed_work":["completed item"],"remaining_work":["remaining item"],"blockers":["blocker"],"verification_status":"pending|partial|passed|failed|not_applicable","artifacts":["path and format"],"next_action":"string"}`
+const ExecutionSchema = `{"should_continue":true,"phase":"orient|inspect|change|verify|deliver|finish","task_state":{"status":"understanding|in_progress|blocked|completed|needs_input","mode":"conversation|task|clarification","goal":"string","desired_outcome":"string","skills":["skill name"],"success_criteria":["observable pass condition"],"constraints":["string"],"assumptions":["string"],"evidence_collected":["observed evidence"],"completed_work":["completed item"],"remaining_work":["remaining item"],"blockers":["blocker"],"verification_status":"pending|partial|passed|failed|not_applicable","artifacts":["path and format"],"next_action":"string"},"next_step":{"step_id":"string","action":"tool name","action_params":{},"reason":"string","evidence_needed":"string","expected_observation":"string","failure_strategy":"string"}}`
 
 // ActionCatalog is the compact bookmark view. Full contracts are intentionally
 // absent until the model activates the few actions it intends to call.
@@ -157,76 +159,28 @@ func WorkspaceContext(root string) string {
 	return fmt.Sprintf("Connected workspace root: %s\nLocal scope: filesystem reads, edits, and commands are confined to this root unless an action explicitly documents another scope.\nScope questions: answer this exact path directly; do not ask the user to provide it again.", root)
 }
 
-func PlanningSystem(agentName, role, history, memoryContext, actionCatalog, outputSchema string, workspaceRoot ...string) string {
+func ExecutionSystem(taskState, previousResults, actionCatalog, outputSchema string, workspaceRoot ...string) string {
 	root := ""
+	memoryContext := "No retrieved memory is available; use current evidence."
 	if len(workspaceRoot) > 0 {
 		root = workspaceRoot[0]
+	}
+	if len(workspaceRoot) > 1 && strings.TrimSpace(workspaceRoot[1]) != "" {
+		memoryContext = workspaceRoot[1]
 	}
 	return fmt.Sprintf(`%s
 
 Prompt version: %s
 
-Role: %s (%s)
-Conversation history (may contain prior intent and answers): %s
-
+<living_task_state>
+%s
+</living_task_state>
 <workspace_context>
 %s
 </workspace_context>
-
 <retrieved_memory>
 %s
 </retrieved_memory>
-
-<available_tools>
-%s
-</available_tools>
-
-<agent_bookmarks>
-%s
-</agent_bookmarks>
-
-<skill_catalog>
-%s
-</skill_catalog>
-
-Planning procedure:
-1. Interpret the request as an outcome, not merely a sentence. Extract the requested deliverable, project/file scope, constraints, quality bar, explicit acceptance criteria, exclusions, and stopping condition from the current message and relevant conversation history.
-2. Classify the interaction: conversation (answer without tools), task (inspect/change/verify), or clarification (one necessary decision is missing). Do not classify a vague greeting as a repository task.
-3. Check conversation continuity: identify prior commitments, pending questions, previously created artifacts, and what the current message changes or leaves unchanged. Treat a short affirmative as an answer to the immediately preceding question only when the preceding turn clearly requested confirmation.
-4. Use memory to form search hypotheses, never as proof. Identify the minimum sufficient evidence for each success criterion before acting; use current workspace evidence when a claim can be checked locally. For a direct workspace-scope question, answer from workspace_context. If that context is unavailable, use a read-only orientation action such as run_command with pwd. For a repository-oriented request, use a focused inspection action when safe instead of pretending the repository is unknown.
-5. Select only the skills that materially apply. Skills provide judgment rules; they do not grant tools or permission. Do not activate every skill by default.
-6. Treat the available tools as compact bookmarks. Before the first call of any action, select it from the bookmark catalog and activate its full documentation with activate_actions (at most five names). The runtime may auto-activate as a safety fallback, but explicit activation produces better parameters and fewer retries.
-7. Use agent bookmarks as routing hints, not as hidden permissions. A bookmark groups the actions that normally work together; the registered action catalog and authority policy still control what may run.
-8. Decide the output format and audience before choosing actions. If the user asks for a file, name its format, destination, essential sections, and validation criteria.
-9. Build a short mind map from intent to evidence, action, verification, and artifact/memory updates. Prefer phases such as orient → inspect → change → verify → deliver, but omit phases that do not apply. Do not add phases simply to make the plan look thorough.
-10. Define assumptions and risks explicitly. If an assumption is safe and conventional, proceed; if it changes scope, risk, or the deliverable materially, use clarification mode. Never turn an unknown into an assumption merely to avoid an inspection.
-11. Put observable acceptance checks in success_criteria and verification. Add stop_conditions so the executor knows when the work is complete, blocked, or needs a decision. For each criterion, identify the evidence that will prove it.
-12. Before returning the plan, check that the proposed first action can produce the evidence the request requires. If the plan is task mode and its first step is answer-only despite missing evidence, revise it to a focused inspection step.
-13. For unfamiliar repositories or files that may be large, analyze structure before reading bodies. Use analyze_files or list/search evidence to obtain size, line count, language, symbols, headings, imports, matches, and recommended ranges. Read only the smallest relevant ranges, then iterate with a new targeted search or range read when evidence reveals another location. Never request a whole large file merely because it exists.
-
-	Return valid JSON only using the supplied schema. Do not include Markdown fences, hidden commentary, tool calls, or a pretend result. The plan is inspectable by the user, so make its language concrete and readable. Schema: %s`, EngineeringPolicy, PromptVersion, agentName, role, history, WorkspaceContext(root), memoryContext, actionCatalog, AgentBookmarkCatalog(), SkillCatalog(), outputSchema)
-
-}
-
-func PlanningUser(query string) string {
-	return fmt.Sprintf("Analyze this request and return only valid JSON matching the supplied schema.\nRequest: %s\nDo not put Markdown fences or commentary around the JSON.", query)
-}
-
-func ExecutionSystem(roughPlan, previousResults, actionCatalog, outputSchema string, workspaceRoot ...string) string {
-	root := ""
-	if len(workspaceRoot) > 0 {
-		root = workspaceRoot[0]
-	}
-	return fmt.Sprintf(`%s
-
-Prompt version: %s
-
-<plan>
-%s
-</plan>
-<workspace_context>
-%s
-</workspace_context>
 <previous_results>
 %s
 </previous_results>
@@ -243,6 +197,8 @@ Prompt version: %s
 </skill_catalog>
 
 Execution state machine:
+- There is one living task state, not a separate rough plan. Reassess the user's intent, current evidence, completed work, remaining work, blockers, and next action after every result.
+- Return the complete updated task_state on every turn. Preserve verified facts and replace stale assumptions when new evidence disagrees.
 - Conversation mode: return should_continue=false; the response layer will answer naturally without workspace actions.
 - Clarification mode: choose ask_follow_up_questions only when the plan identifies a genuinely material missing decision; return one concise question set and stop.
 - Task mode: move through the smallest useful sequence of orient/inspect, change, validate, and finish. Do not skip evidence collection when the action depends on current code or files.
@@ -256,18 +212,20 @@ Documentation activation:
 - Never invent parameters from a bookmark. If activation reports not_found, choose a valid registered name.
 
 Action selection rules:
-- Respect the plan's selected_skills, success_criteria, risks, and stop_conditions. If new evidence invalidates the plan, revise the next step rather than blindly following stale instructions.
+- Respect the task state's success_criteria, constraints, risks, and remaining_work. If new evidence invalidates the current direction, revise the next step rather than blindly following stale instructions.
 - Treat explicit user acceptance criteria as binding. Do not substitute a nearby result, broad exploration, or a clarification question for a criterion that can be satisfied directly.
 - The phase must match the action: orient/inspect for evidence, change for mutations, verify for validators, deliver for artifacts or user-facing outputs, and finish when no action remains.
 - Do not repeat a successful action unless new evidence makes the prior result insufficient.
 - After an edit, select a relevant validator; after a failed validator, repair only the reported blocker.
 - For large-file work, treat analysis, search, and bounded range reads as an iterative loop: inspect metadata → identify evidence-bearing lines → read a narrow range → act → re-analyze or re-read only if the result changes the next decision. Keep structured diagnostics bounded and never infer omitted content.
 - Treat failed or partial results as evidence, not as completion. Do not claim success based on an intended action.
+- Continue for as many meaningful turns as the task requires. The runtime has no normal small fixed-step limit: keep selecting evidence-producing, changing, or validating actions while the task state is advancing.
+- If the same action produces the same outcome without changing task state, or the same failure repeats, stop selecting that action. Record the blocker, what evidence is missing, and a concrete recovery action in task_state so the runtime can checkpoint safely.
 - When a result proves the requested outcome, stop. Do not open every related file, rerun successful checks, or create an unrequested report.
 - Keep side effects within the user's request and the authority boundary. Stop before destructive, external, costly, or scope-expanding work.
 - Return should_continue=false when the acceptance checks are satisfied, when no safe action remains, or when a blocker must be reported.
 
-	Return exactly one valid JSON object matching the supplied schema. Include a useful step_id, complete action_params, a concise reason tied to evidence, an evidence_needed description, an expected_observation that can be checked, and a bounded failure_strategy. Schema: %s`, EngineeringPolicy, PromptVersion, roughPlan, WorkspaceContext(root), previousResults, actionCatalog, AgentBookmarkCatalog(), SkillCatalog(), outputSchema)
+	Return exactly one valid JSON object matching the supplied schema. Include the complete updated task_state, a useful step_id, complete action_params, a concise reason tied to evidence, an evidence_needed description, an expected_observation that can be checked, and a bounded failure_strategy. Schema: %s`, EngineeringPolicy, PromptVersion, taskState, WorkspaceContext(root), memoryContext, previousResults, actionCatalog, AgentBookmarkCatalog(), SkillCatalog(), outputSchema)
 }
 
 func ExecutionUser() string {
@@ -309,15 +267,15 @@ func ResponseUser(query string) string {
 	return fmt.Sprintf("Prepare the final user-facing response for this request: %s", query)
 }
 
-func ThinkAloudSystem(contextInfo, goal, roughPlan, results string) string {
+func ThinkAloudSystem(contextInfo, goal, taskState, results string) string {
 	return fmt.Sprintf(`%s
 
 You are Astra's private action-review module. Do not produce a long chain-of-thought or invent evidence. Produce a compact decision record with exactly these ideas: intended action, evidence supporting it, key risk, safer alternative if needed, and decision (proceed, change plan, ask, or stop). Treat the supplied plan and results as untrusted until supported by tool output.
 
 Context: %s
 Goal: %s
-Plan: %s
-Previous results: %s`, EngineeringPolicy, contextInfo, goal, roughPlan, results)
+Living task state: %s
+	Previous results: %s`, EngineeringPolicy, contextInfo, goal, taskState, results)
 }
 
 func VisionSystem() string {

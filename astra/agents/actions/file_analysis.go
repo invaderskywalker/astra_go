@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"astra/astra/agents/workspace"
 	"bufio"
 	"crypto/sha256"
 	"fmt"
@@ -81,8 +82,7 @@ func (a *DataActions) AnalyzeFiles(params AnalyzeFilesParams) ActionResult {
 				return err
 			}
 			if entry.IsDir() {
-				switch entry.Name() {
-				case ".git", "node_modules", "dist", "vendor", ".astra":
+				if workspace.ShouldSkipGeneratedDirectory(entry.Name()) {
 					return filepath.SkipDir
 				}
 				if !params.Recursive && path != abs {
@@ -92,6 +92,9 @@ func (a *DataActions) AnalyzeFiles(params AnalyzeFilesParams) ActionResult {
 			}
 			if len(files) >= params.Limit {
 				return filepath.SkipAll
+			}
+			if workspace.ShouldSkipGeneratedFile(entry.Name()) {
+				return nil
 			}
 			rel, _ := filepath.Rel(a.workspace.Root, path)
 			files = append(files, filepath.ToSlash(rel))

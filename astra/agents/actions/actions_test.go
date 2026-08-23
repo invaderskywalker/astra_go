@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"astra/astra/sources/state"
 	"astra/astra/utils/logging"
 )
 
@@ -33,7 +34,7 @@ func TestReadFilesAllowsOnlyCurrentSessionAttachments(t *testing.T) {
 	project := t.TempDir()
 	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
 	registry := NewDataActionsForSessionAt(nil, 1, "attachment-test", project)
-	attachmentRoot := filepath.Join(registry.managedRoot, "sessions", safeSessionName("attachment-test"), "attachments")
+	attachmentRoot := filepath.Join(registry.managedSessionRoot(), "attachments")
 	if err := os.MkdirAll(attachmentRoot, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +56,24 @@ func TestReadFilesAllowsOnlyCurrentSessionAttachments(t *testing.T) {
 	}
 }
 
+func TestReadFilesAllowsCurrentSessionArtifacts(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	registry := NewDataActionsForSessionAt(nil, 1, "artifact-test", project)
+	written := registry.WriteArtifact(WriteArtifactParams{Title: "assessment", Format: "markdown", Content: "# Assessment\n\nverified"})
+	if !written.Success || len(written.Artifacts) != 1 {
+		t.Fatalf("artifact write failed: %#v", written)
+	}
+	path := written.Artifacts[0]
+	if filepath.Dir(path) != state.SessionArtifactsRoot(project, "artifact-test") {
+		t.Fatalf("artifact path is outside the session manifest root: %s", path)
+	}
+	result := registry.ReadFilesInRepo(ReadFilesParams{Files: []ReadFileParams{{Path: path}}})
+	if !result.Success || !strings.Contains(fmt.Sprint(result.Diagnostics), "Assessment") {
+		t.Fatalf("managed artifact was not readable: %#v", result)
+	}
+}
+
 func TestAnalyzeFilesReturnsStructureAndRanges(t *testing.T) {
 	project := t.TempDir()
 	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
@@ -72,6 +91,46 @@ func TestAnalyzeFilesReturnsStructureAndRanges(t *testing.T) {
 	}
 	if len(profiles[0].Symbols) == 0 || len(profiles[0].Matches) != 1 || len(profiles[0].RecommendedRanges) != 1 {
 		t.Fatalf("analysis omitted structure or ranges: %#v", profiles[0])
+	}
+}
+
+func TestAnalyzeFilesSkipsGeneratedCachesAndBinaryArtifacts(t *testing.T) {
+	project := t.TempDir()
+	t.Setenv("ASTRA_DATA_DIR", filepath.Join(t.TempDir(), "astra"))
+	if err := os.MkdirAll(filepath.Join(project, "__pycache__"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".venv", "lib"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "__pycache__", "bad.pyc"), []byte("needle"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".venv", "lib", "ignored.py"), []byte("ignored"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "main.py"), []byte("def run():\n    return True\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry := NewDataActionsForSessionAt(nil, 1, "analysis-cache-test", project)
+	result := registry.AnalyzeFiles(AnalyzeFilesParams{Paths: []string{"."}, Recursive: true, Limit: 20})
+	if !result.Success {
+		t.Fatalf("analysis failed: %#v", result)
+	}
+	profiles, ok := result.Diagnostics.([]FileAnalysis)
+	if !ok || len(profiles) != 1 || profiles[0].Path != "main.py" {
+		t.Fatalf("generated files were included in analysis: %#v", result.Diagnostics)
+	}
+	listed := registry.ListFiles(ListFilesParams{Path: ".", Recursive: true})
+	if !listed.Success || strings.Contains(fmt.Sprint(listed.Diagnostics), "bad.pyc") {
+		t.Fatalf("generated files were included in recursive listing: %#v", listed)
+	}
+	if err := os.WriteFile(filepath.Join(project, "main.txt"), []byte("needle"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	searched := registry.SearchCode(SearchCodeParams{Query: "needle"})
+	if !searched.Success || strings.Contains(fmt.Sprint(searched.Diagnostics), "bad.pyc") {
+		t.Fatalf("generated files were included in search: %#v", searched)
 	}
 }
 
