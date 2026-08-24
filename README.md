@@ -3,6 +3,41 @@
 Astra is a Go-based local-first engineering agent with a professional terminal
 cockpit. It can operate with a local Ollama model or an OpenAI model.
 
+[![CI](https://github.com/invaderskywalker/astra_go/actions/workflows/ci.yml/badge.svg)](https://github.com/invaderskywalker/astra_go/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+
+> A local-first engineering cockpit for inspecting repositories, writing and
+> verifying code, producing durable files, and building a linked file-backed
+> Mind Palace—without a database or required managed service.
+
+## Start here
+
+| I want to… | Start with |
+| --- | --- |
+| Install and use Astra | [Build once, use anywhere](#build-once-use-the-cli-anywhere) |
+| Choose Ollama or Luna | [CLI model selection](#cli-model-selection) |
+| Understand the architecture | [Capability map](docs/capabilities.md) |
+| Learn the cockpit controls | [CLI cockpit guide](docs/cli-cockpit.md) |
+| Run deterministic checks | [Automated evaluations](#automated-capability-evaluations) |
+| Understand memory and storage | [File-backed memory](#file-backed-memory) |
+| Contribute safely | [Development](#development) and [release notes](CHANGELOG.md) |
+
+## Project map
+
+```text
+astra/
+  cmd/                 CLI entrypoint, authentication, cockpit, access flow
+  agents/core/         living task state, execution loop, supervisors
+  agents/actions/      typed repository, command, artifact, memory actions
+  agents/prompts/      policy, skills, bookmarks, and execution instructions
+  agents/workspace/    bounded filesystem and command primitives
+  sources/mindpalace/  linked Markdown memory and retrieval index
+  sources/state/       project, session, run, and evidence manifests
+  sources/scope/       explicit filesystem authority records
+  services/llm/        Ollama and OpenAI model clients
+docs/                  capability, cockpit, evaluation, and storage contracts
+```
+
 ## Requirements
 
 - Go 1.25+
